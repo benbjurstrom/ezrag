@@ -601,9 +601,15 @@ export class GeminiService {
    *
    * Performance: Fetching 5,000 documents (250 pages) takes ~10-15 seconds.
    * This is still much faster than 5,000 individual documents.get() calls.
+   *
+   * API Pagination:
+   * - Maximum pageSize: 20 documents per page
+   * - Default pageSize: 10 documents per page (if not specified)
+   * - Response contains: { documents: [], nextPageToken: string }
+   * - Loop continues while nextPageToken is present
    */
   async listDocuments(storeName: string): Promise<any[]> {
-    const docs: any[] = [];
+    const allDocs: any[] = [];
     let pageToken: string | undefined = undefined;
 
     do {
@@ -616,17 +622,18 @@ export class GeminiService {
       });
 
       // Collect documents from this page
+      // SDK returns an async iterable, iterate through all documents
       for await (const doc of response) {
-        docs.push(doc);
+        allDocs.push(doc);
       }
 
-      // Get next page token (if any)
-      // Note: SDK may expose nextPageToken differently, adjust as needed
+      // Get next page token from response
+      // If nextPageToken is present, there are more pages to fetch
       pageToken = response.nextPageToken;
 
     } while (pageToken);
 
-    return docs;
+    return allDocs;
   }
 
   /**
