@@ -9,12 +9,13 @@
 5. [Implementation Phases](#5-implementation-phases)
 6. [Detailed Component Design](#6-detailed-component-design)
 7. [Code Examples](#7-code-examples)
-8. [Testing Strategy](#8-testing-strategy)
-9. [Key Implementation Notes](#9-key-implementation-notes)
-10. [Key Implementation Clarifications](#10-key-implementation-clarifications)
-11. [Obsidian API Best Practices & Implementation Notes](#11-obsidian-api-best-practices--implementation-notes)
-12. [Future Enhancements](#12-future-enhancements-post-mvp)
-13. [Conclusion](#13-conclusion)
+8. [Implementation Caveats & Notes](#8-implementation-caveats--notes)
+9. [Testing Strategy](#9-testing-strategy)
+10. [Key Implementation Notes](#10-key-implementation-notes)
+11. [Key Implementation Clarifications](#11-key-implementation-clarifications)
+12. [Obsidian API Best Practices & Implementation Notes](#12-obsidian-api-best-practices--implementation-notes)
+13. [Future Enhancements](#13-future-enhancements-post-mvp)
+14. [Conclusion](#14-conclusion)
 
 ---
 
@@ -175,9 +176,9 @@ export interface IndexState {
 
 export interface IndexedDocState {
   vaultPath: string; // e.g., "Projects/Notes.md"
-  geminiDocumentName: string; // e.g., "fileSearchStores/.../documents/..."
+  geminiDocumentName: string | null; // e.g., "fileSearchStores/.../documents/..." (null if not yet uploaded)
   contentHash: string; // SHA-256 of file content
-  pathHash: string; // SHA-256 of vaultPath (for metadata ID)
+  pathHash: string; // SHA-256 of vaultPath (stable ID for metadata)
   status: 'pending' | 'ready' | 'error';
   lastLocalMtime: number; // File modification time
   lastIndexedAt: number; // When we last indexed
@@ -264,7 +265,6 @@ interface DocumentMetadata {
 
 ```typescript
 // src/state/state.ts
-import { createHash } from 'crypto';
 
 export interface PersistedData {
   version: number;
@@ -278,6 +278,12 @@ export interface PluginSettings {
   storeDisplayName: string;
   includeFolders: string[];
   maxConcurrentUploads: number;
+  chunkingConfig: ChunkingConfig;
+}
+
+export interface ChunkingConfig {
+  maxTokensPerChunk: number;
+  maxOverlapTokens: number;
 }
 
 export interface IndexState {
@@ -286,7 +292,7 @@ export interface IndexState {
 
 export interface IndexedDocState {
   vaultPath: string;
-  geminiDocumentName: string;
+  geminiDocumentName: string | null;
   contentHash: string;
   pathHash: string;
   status: 'pending' | 'ready' | 'error';
@@ -314,12 +320,27 @@ export const DEFAULT_DATA: PersistedData = {
   index: { docs: {} },
 };
 
-export function computeContentHash(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
+/**
+ * Compute SHA-256 hash of content using Web Crypto API
+ * Note: Uses Web Crypto instead of Node's crypto for mobile compatibility
+ */
+export async function computeContentHash(content: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(content);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function computePathHash(path: string): string {
-  return createHash('sha256').update(path).digest('hex');
+/**
+ * Compute SHA-256 hash of path using Web Crypto API
+ */
+export async function computePathHash(path: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(path);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export class StateManager {
@@ -617,26 +638,42 @@ export class IndexManager {
 
   /**
    * Startup reconciliation: scan all files and queue changed ones
+   * Note: Does not wait for queue to finish - jobs run in background
    */
   async reconcileOnStartup(): Promise<void> {
     const files = this.getIndexableFiles();
-    const settings = this.state.getSettings();
 
     this.stats.total = files.length;
     this.stats.completed = 0;
     this.stats.failed = 0;
     this.stats.pending = 0;
 
+    // Scan all files and queue those that need indexing
+    // Read and hash once to avoid double-read later
     for (const file of files) {
-      const shouldIndex = await this.shouldIndexFile(file);
-      if (shouldIndex) {
-        this.stats.pending++;
-        this.queueIndexJob(file);
+      try {
+        const content = await this.vault.read(file);
+        const contentHash = await computeContentHash(content);
+
+        const state = this.state.getDocState(file.path);
+
+        // Determine if indexing is needed
+        const needsIndexing = !state ||
+                              state.contentHash !== contentHash ||
+                              state.status === 'error';
+
+        if (needsIndexing) {
+          this.stats.pending++;
+          this.queueIndexJob(file, content, contentHash);
+        }
+      } catch (err) {
+        console.error(`Failed to scan ${file.path}:`, err);
       }
     }
 
-    await this.queue.onIdle();
-    this.updateProgress('Idle');
+    // Don't await queue.onIdle() - let jobs run in background
+    // Progress updates happen via onProgress callback
+    this.updateProgress('Indexing');
   }
 
   /**
@@ -647,7 +684,14 @@ export class IndexManager {
       return;
     }
 
-    this.queueIndexJob(file);
+    // Read and hash once
+    try {
+      const content = await this.vault.read(file);
+      const contentHash = await computeContentHash(content);
+      this.queueIndexJob(file, content, contentHash);
+    } catch (err) {
+      console.error(`Failed to queue new file ${file.path}:`, err);
+    }
   }
 
   /**
@@ -658,9 +702,18 @@ export class IndexManager {
       return;
     }
 
-    const shouldIndex = await this.shouldIndexFile(file);
-    if (shouldIndex) {
-      this.queueIndexJob(file);
+    try {
+      const content = await this.vault.read(file);
+      const contentHash = await computeContentHash(content);
+
+      const state = this.state.getDocState(file.path);
+
+      // Only queue if content actually changed
+      if (!state || state.contentHash !== contentHash || state.status === 'error') {
+        this.queueIndexJob(file, content, contentHash);
+      }
+    } catch (err) {
+      console.error(`Failed to check ${file.path}:`, err);
     }
   }
 
@@ -757,11 +810,12 @@ export class IndexManager {
 
   /**
    * Private: Queue a job to index a file
+   * Accepts pre-read content and hash to avoid double-reading
    */
-  private queueIndexJob(file: TFile): void {
+  private queueIndexJob(file: TFile, content: string, contentHash: string): void {
     this.queue.add(async () => {
       try {
-        await this.indexFile(file);
+        await this.indexFile(file, content, contentHash);
         this.stats.completed++;
       } catch (err) {
         this.stats.failed++;
@@ -775,11 +829,10 @@ export class IndexManager {
 
   /**
    * Private: Index a single file
+   * Accepts pre-read content and hash to avoid re-reading
    */
-  private async indexFile(file: TFile): Promise<void> {
-    const content = await this.vault.read(file);
-    const contentHash = computeContentHash(content);
-    const pathHash = computePathHash(file.path);
+  private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
+    const pathHash = await computePathHash(file.path);
     const settings = this.state.getSettings();
 
     // Extract tags from frontmatter using MetadataCache
@@ -827,28 +880,6 @@ export class IndexManager {
     };
 
     this.state.setDocState(file.path, newState);
-  }
-
-  /**
-   * Private: Determine if file should be indexed
-   */
-  private async shouldIndexFile(file: TFile): Promise<boolean> {
-    const content = await this.vault.read(file);
-    const contentHash = computeContentHash(content);
-
-    const state = this.state.getDocState(file.path);
-
-    // No state = new file, index it
-    if (!state) return true;
-
-    // Hash changed = content changed, reindex
-    if (state.contentHash !== contentHash) return true;
-
-    // Error status = retry
-    if (state.status === 'error') return true;
-
-    // Otherwise, skip
-    return false;
   }
 
   /**
@@ -1092,7 +1123,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
 ```typescript
 // src/main.ts
-import { Plugin, TFile, Notice } from 'obsidian';
+import { App, Modal, Plugin, TFile, Notice } from 'obsidian';
 import { StateManager, DEFAULT_DATA } from './state/state';
 import { GeminiService } from './gemini/geminiService';
 import { IndexManager } from './indexing/indexManager';
@@ -1372,28 +1403,26 @@ Updated: ${new Date(store.updateTime).toLocaleString()}
       return;
     }
 
-    // Confirmation modal (simplified for plan)
-    const confirmed = confirm(
-      `Are you sure you want to permanently delete the FileSearchStore "${settings.storeDisplayName}"?\n\nThis cannot be undone!`
+    // Show confirmation modal
+    const modal = new ConfirmDeleteModal(
+      this.app,
+      settings.storeDisplayName,
+      async () => {
+        new Notice('Deleting FileSearchStore...');
+        await this.geminiService!.deleteStore(settings.storeName);
+
+        // Clear local state
+        this.stateManager.updateSettings({
+          storeName: '',
+          storeDisplayName: '',
+        });
+        this.stateManager.clearIndex();
+        await this.saveState();
+
+        new Notice('FileSearchStore deleted successfully!');
+      }
     );
-
-    if (!confirmed) {
-      new Notice('Store deletion cancelled.');
-      return;
-    }
-
-    new Notice('Deleting FileSearchStore...');
-    await this.geminiService.deleteStore(settings.storeName);
-
-    // Clear local state
-    this.stateManager.updateSettings({
-      storeName: '',
-      storeDisplayName: '',
-    });
-    this.stateManager.clearIndex();
-    await this.saveState();
-
-    new Notice('FileSearchStore deleted successfully!');
+    modal.open();
   }
 
   formatBytes(bytes: number): string {
@@ -1421,9 +1450,55 @@ Updated: ${new Date(store.updateTime).toLocaleString()}
   }
 
   updateStatusBar(text: string): void {
+    // Note: Status bar is not available on mobile
     if (this.statusBarItem) {
       this.statusBarItem.setText(`EzRAG: ${text}`);
     }
+  }
+}
+
+/**
+ * Confirmation modal for destructive actions
+ */
+class ConfirmDeleteModal extends Modal {
+  private storeName: string;
+  private onConfirm: () => Promise<void>;
+
+  constructor(app: App, storeName: string, onConfirm: () => Promise<void>) {
+    super(app);
+    this.storeName = storeName;
+    this.onConfirm = onConfirm;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h2', { text: 'Confirm deletion' });
+    contentEl.createEl('p', {
+      text: `Are you sure you want to permanently delete the FileSearchStore "${this.storeName}"?`
+    });
+    contentEl.createEl('p', {
+      text: 'This action cannot be undone!',
+      cls: 'mod-warning'
+    });
+
+    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+
+    const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+    cancelButton.addEventListener('click', () => this.close());
+
+    const confirmButton = buttonContainer.createEl('button', {
+      text: 'Delete',
+      cls: 'mod-warning'
+    });
+    confirmButton.addEventListener('click', async () => {
+      this.close();
+      await this.onConfirm();
+    });
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
   }
 }
 ```
@@ -1530,7 +1605,119 @@ async function searchWithFilter(query: string, tags?: string[]) {
 
 ---
 
-## 8. Testing Strategy
+## 8. Implementation Caveats & Notes
+
+### 8.1 Gemini SDK Integration
+
+**SDK API Stability:** The `@google/genai` SDK is still evolving. The `geminiService.ts` layer is designed as a thin integration layer that may need adjustments as the SDK stabilizes. Key areas to watch:
+
+- **Store and document listing APIs**: Async iteration patterns may change
+- **Upload operation polling**: The `operation.done` flag and response structure
+- **Chunking configuration**: The `whiteSpaceConfig` schema may not be finalized
+
+**Recommendation:** Keep `geminiService.ts` isolated and expect to refactor API calls as SDK matures.
+
+### 8.2 Chunking Configuration Scope
+
+The chunking configuration (`maxTokensPerChunk`, `maxOverlapTokens`) is included in Phase 1 but adds complexity early. Consider:
+
+- **Option 1 (current):** Expose in settings from the start
+- **Option 2 (leaner MVP):** Hard-code sensible defaults (400/50) and add configuration in Phase 2 after validating with real usage
+
+The architecture supports both—chunking config is already isolated in `uploadDocument()`.
+
+### 8.3 Settings UI Scope
+
+The settings tab includes extensive store management features:
+- View current store stats
+- List all stores (across all vaults)
+- Delete current store
+- Preview/cleanup orphans
+
+For a faster v1, consider:
+- Keeping only: API key, folders, concurrency, rebuild index
+- Moving store management to an "Advanced" collapsible section
+- Deferring multi-vault store listing to post-MVP
+
+### 8.4 Mobile Compatibility Notes
+
+**Status bar:** The status bar API is a no-op on mobile. For mobile support, consider:
+- Wrapping status bar updates in `if (!Platform.isMobile)` checks
+- Adding an optional "progress pane" view for mobile users
+
+**Crypto API:** Now uses Web Crypto (`crypto.subtle`) instead of Node's `crypto` module for cross-platform compatibility.
+
+### 8.5 Tag Extraction Strategy
+
+Current implementation extracts tags from **frontmatter only**:
+```typescript
+const cache = this.app.metadataCache.getFileCache(file);
+const tags = cache?.frontmatter?.tags;
+```
+
+If you want to include **inline `#tags`** from document body:
+```typescript
+import { getAllTags } from 'obsidian';
+const allTags = getAllTags(cache) || [];
+```
+
+This is a simple toggle—decide based on your indexing use case.
+
+### 8.6 Error Visibility
+
+Files with `status === 'error'` are tracked but not prominently surfaced. Consider adding:
+- An "Errors" section in settings showing files with indexing errors
+- A count badge: "3 files failed to index" with a link to view details
+- Retry button per failed file
+
+The data model already supports this—just needs UI.
+
+### 8.7 IndexManager Scope
+
+The `IndexManager` currently handles:
+- Startup reconciliation
+- Event handling (create/modify/rename/delete)
+- Queue management
+- Maintenance (rebuild, cleanup orphans)
+
+If it grows too large, consider extracting maintenance operations to:
+- A separate `MaintenanceService`, or
+- Top-level plugin methods that call smaller helpers
+
+Not urgent for v1, but watch for bloat.
+
+### 8.8 MCP Canonical ID
+
+For the MCP server (Phase 4), decide on a **canonical document ID** early:
+
+**Option 1: `vaultPath`** (transparent, human-friendly)
+```json
+{ "id": "Projects/Notes.md", "title": "Notes" }
+```
+
+**Option 2: `pathHash`** (opaque, privacy-preserving)
+```json
+{ "id": "a3f5b2...", "title": "Notes" }
+```
+
+The architecture supports both. Document this choice in `mcp/server.ts` and stick to it for consistency.
+
+### 8.9 Chat View Conversation State
+
+When implementing the chat view (Phase 3), decide where conversation state lives:
+- **Option 1:** Plugin state (persisted across restarts)
+- **Option 2:** In-memory only (ephemeral)
+- **Option 3:** LocalStorage-like (per-vault)
+
+Also plan how to:
+- Map grounding chunks back to Obsidian files (use `obsidian_path` metadata)
+- Handle "open file at citation" links (use `workspace.openLinkText()`)
+
+Don't overstuff `main.ts`—give chat its own module in `ui/chatView.ts`.
+
+---
+
+## 9. Testing Strategy
 
 ### Unit Tests
 
@@ -1628,7 +1815,7 @@ Phase 4:
 
 ---
 
-## 9. Key Implementation Notes
+## 10. Key Implementation Notes
 
 ### Handling Gemini API Constraints
 
@@ -1660,9 +1847,9 @@ Phase 4:
 
 ---
 
-## 10. Key Implementation Clarifications
+## 11. Key Implementation Clarifications
 
-### 10.1 Upload Completion Semantics
+### 11.1 Upload Completion Semantics
 
 **Question:** When is an upload considered complete for concurrency tracking?
 
@@ -1685,7 +1872,7 @@ while (!operation.done) {
 
 With `maxConcurrentUploads: 2`, we have **2 uploads actively polling** at once. Since each upload can take 10-30+ seconds (depending on file size), this prevents API overload while still allowing reasonable throughput.
 
-### 10.2 Chunking Strategy
+### 11.2 Chunking Strategy
 
 **Global chunking configuration** is exposed in settings:
 
@@ -1701,7 +1888,7 @@ With `maxConcurrentUploads: 2`, we have **2 uploads actively polling** at once. 
 
 **Future enhancement:** Per-folder or per-file-size chunking strategies, but for now this is applied globally to all documents.
 
-### 10.3 Store Management Tools
+### 11.3 Store Management Tools
 
 Users need visibility into their remote FileSearchStores. The following tools are provided:
 
@@ -1731,11 +1918,11 @@ Permanently deletes the current vault's FileSearchStore:
 
 ---
 
-## 11. Obsidian API Best Practices & Implementation Notes
+## 12. Obsidian API Best Practices & Implementation Notes
 
 This section documents critical Obsidian API best practices based on official documentation review.
 
-### 11.1 Vault Event Handling
+### 12.1 Vault Event Handling
 
 **Critical:** Vault `create` events fire for EVERY existing file during plugin startup. To prevent performance issues, register vault event handlers AFTER workspace layout is ready:
 
@@ -1773,7 +1960,7 @@ this.registerEvent(
 
 **Impact:** Prevents processing thousands of files on startup, dramatically improving load time.
 
-### 11.2 MetadataCache for Frontmatter
+### 12.2 MetadataCache for Frontmatter
 
 **Best Practice:** Always use `MetadataCache` for reading frontmatter instead of manual YAML parsing:
 
@@ -1813,7 +2000,7 @@ await app.fileManager.processFrontMatter(file, (frontmatter) => {
 });
 ```
 
-### 11.3 Nested Settings Merge
+### 12.3 Nested Settings Merge
 
 **Important:** `Object.assign()` performs shallow copy. For nested settings objects, manually deep merge to preserve defaults:
 
@@ -1841,7 +2028,7 @@ async loadSettings() {
 
 **Impact:** Ensures default values are preserved when new settings fields are added.
 
-### 11.4 File Path Operations
+### 12.4 File Path Operations
 
 **Performance Critical:**
 
@@ -1862,7 +2049,7 @@ const cleanPath = normalizePath(userInput);
 const file = this.app.vault.getFileByPath(cleanPath);
 ```
 
-### 11.5 File Reading Strategies
+### 12.5 File Reading Strategies
 
 **Choose the right method:**
 
@@ -1884,7 +2071,7 @@ await this.app.vault.process(file, (data) => {
 - Prevents data loss from concurrent modifications
 - Handles read-modify-write as single transaction
 
-### 11.6 External Settings Changes
+### 12.6 External Settings Changes
 
 **Best Practice:** Settings can be modified externally (sync services, manual edits). Implement `onExternalSettingsChange()` to handle this:
 
@@ -1898,7 +2085,7 @@ async onExternalSettingsChange() {
 }
 ```
 
-### 11.7 Mobile Compatibility
+### 12.7 Mobile Compatibility
 
 **Limitations:**
 - Status bar NOT supported on mobile
@@ -1915,7 +2102,7 @@ if (Platform.isMobile) {
 }
 ```
 
-### 11.8 Security Best Practices
+### 12.8 Security Best Practices
 
 **DOM Safety:**
 ```typescript
@@ -1936,7 +2123,7 @@ window.app.vault.read(file);
 this.app.vault.read(file);
 ```
 
-### 11.9 Resource Cleanup
+### 12.9 Resource Cleanup
 
 **Always use `register*` methods for automatic cleanup:**
 
@@ -1959,7 +2146,7 @@ export default class MyPlugin extends Plugin {
 }
 ```
 
-### 11.10 View Management
+### 12.10 View Management
 
 **Don't store view references:**
 ```typescript
@@ -1975,7 +2162,7 @@ if (view) {
 
 **Reason:** Users can close/move leaves at any time, making stored references stale.
 
-### 11.11 Performance Optimization
+### 12.11 Performance Optimization
 
 **Keep `onload()` lightweight:**
 ```typescript
@@ -2000,7 +2187,7 @@ async onload() {
 
 ---
 
-## 12. Future Enhancements (Post-MVP)
+## 13. Future Enhancements (Post-MVP)
 
 - **Selective indexing**: Right-click menu to exclude specific files
 - **Per-folder chunking strategies**: Different chunking configs based on folder or file size
@@ -2016,7 +2203,7 @@ async onload() {
 
 ---
 
-## 13. Conclusion
+## 14. Conclusion
 
 This plan provides a complete blueprint for building EzRAG. The phased approach allows incremental delivery of value:
 - **Phase 1**: Basic infrastructure and settings
@@ -2028,9 +2215,10 @@ The architecture maintains separation of concerns, making it easy to reuse code 
 
 **Key strengths of this implementation:**
 - ✅ **Follows Obsidian best practices**: Leverages MetadataCache, prevents startup event flooding, proper resource cleanup
-- ✅ **Performance-optimized**: Hash-based change detection, deferred event registration, minimal startup overhead
+- ✅ **Performance-optimized**: Single read/hash per file, non-blocking startup reconciliation, minimal overhead
+- ✅ **Cross-platform compatible**: Uses Web Crypto API instead of Node crypto for mobile support
 - ✅ **Robust state management**: Deep merge for nested settings, external settings change handling, atomic operations
-- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation
-- ✅ **Well-documented**: Comprehensive best practices section for future maintainers
+- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation, Obsidian modals for confirmations
+- ✅ **Well-documented**: Comprehensive implementation caveats and best practices sections
 
-This plan is based on official Obsidian developer documentation to ensure correctness, performance, and maintainability.
+This plan incorporates feedback from Obsidian experts and is based on official developer documentation to ensure correctness, performance, and maintainability.
