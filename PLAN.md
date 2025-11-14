@@ -52,6 +52,10 @@ Build an Obsidian plugin that:
 │  └─────┬──────┘  └──────┬───────┘  └──────────┬─────────┘  │
 │        │                │                     │             │
 │  ┌─────▼────────────────▼─────────────────────▼─────────┐  │
+│  │   Runner Check: isRunner() → Gate all indexing      │  │
+│  └──────────────────────┬──────────────────────────────┘  │
+│                         │ (if runner = true)               │
+│  ┌──────────────────────▼──────────────────────────────┐  │
 │  │          Indexing Engine (IndexManager)              │  │
 │  │  • Queue management (p-queue)                        │  │
 │  │  • Event handling (create/modify/rename/delete)      │  │
@@ -62,16 +66,26 @@ Build an Obsidian plugin that:
 │  ┌──────────────────────▼──────────────────────────────┐  │
 │  │         Gemini Service (geminiService.ts)           │  │
 │  │  • Store discovery/creation                         │  │
-│  │  • Document upload/delete                           │  │
+│  │  • Document upload/delete (with pagination)         │  │
 │  │  • File Search queries                              │  │
 │  └──────────────────────┬──────────────────────────────┘  │
 │                         │                                  │
 │  ┌──────────────────────▼──────────────────────────────┐  │
 │  │         State Manager (state.ts)                    │  │
-│  │  • PersistedData management                         │  │
+│  │  • PersistedData management (synced via vault)     │  │
 │  │  • IndexedDocState tracking                         │  │
 │  │  • loadData/saveData wrapper                        │  │
 │  └─────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│           Runner State (per-machine, non-synced)            │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  RunnerManager (runnerState.ts)                        │ │
+│  │  • Stored outside vault (Obsidian config dir)         │ │
+│  │  • Per-vault, per-machine isolation                   │ │
+│  │  • isRunner flag + device metadata                    │ │
+│  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -87,26 +101,60 @@ Build an Obsidian plugin that:
 
 ### Data Flow
 
-**Indexing Flow:**
+**Indexing Flow (Hot Path - 99% of operations):**
 ```
-User saves note → Vault event → IndexManager
-                                    ↓
+User saves note → Vault event → Runner check: isRunner()?
+                                    ↓ YES (runner machine)
                           Compute content hash
                                     ↓
-                          Hash different? → Add to queue
+                          Hash different? → Add to queue with retry logic
                                     ↓
                           Job executes:
-                          1. Delete old doc (if exists)
-                          2. Upload new doc with metadata
-                          3. Update IndexedDocState
-                          4. Save state
+                          1. Check if local state has document ID
+                          2. If yes: Use it (hot path)
+                          3. If no: Check remote for existing doc by pathHash (cold path)
+                          4. Delete old doc if exists (use documents.get to verify)
+                          5. Upload new doc with metadata
+                          6. Poll until operation.done === true
+                          7. Update IndexedDocState
+                          8. Save state (syncs to other devices)
+                                    ↓
+                          [If error: Retry with exponential backoff (3 attempts)]
+                                    ↓ NO (not runner)
+                          Ignore event (no indexing)
+```
+
+**Janitor Flow (Manual deduplication only):**
+```
+User clicks "Run Deduplication" in settings → Runner check: isRunner()?
+                          ↓ YES (runner machine)
+                    Open JanitorProgressModal
+                          ↓
+                    List ALL documents from Gemini (with pagination)
+                          ↓
+                    Build Map<PathHash, Doc[]> in memory
+                          ↓
+                    For each pathHash group:
+                      - 1 doc: Verify local state matches
+                      - 2+ docs: DUPLICATE DETECTED
+                          ↓ Sort by mtime (descending)
+                          ↓ Keep newest
+                          ↓ Delete older duplicates
+                          ↓ Update local state to point to winner
+                          ↓ Update progress modal
+                          ↓
+                    Save state if any changes
+                          ↓
+                    Show completion notice
+                          ↓ NO (not runner)
+                    Show error: "Not configured as runner"
 ```
 
 **Query Flow (Chat):**
 ```
 User query → Chat UI → geminiService.fileSearch()
                               ↓
-                    Gemini API with FileSearch tool
+                    Gemini API with FileSearch tool + metadata filters
                               ↓
                     Response with grounding chunks
                               ↓
@@ -121,6 +169,8 @@ User query → Chat UI → geminiService.fileSearch()
 src/
 ├── main.ts                  # Plugin entry point
 ├── types.ts                 # Shared TypeScript interfaces
+├── runner/
+│   └── runnerState.ts      # Per-machine runner configuration (non-synced)
 ├── state/
 │   ├── state.ts            # State management (Obsidian-agnostic)
 │   └── stateManager.ts     # Obsidian-specific wrapper
@@ -129,12 +179,15 @@ src/
 │   └── types.ts            # Gemini-specific types
 ├── indexing/
 │   ├── indexManager.ts     # Main indexing orchestrator
+│   ├── janitor.ts          # Deduplication and sync conflict resolution
 │   ├── queue.ts            # Job queue wrapper
 │   ├── hashUtils.ts        # Content hashing utilities
 │   └── reconciler.ts       # Startup reconciliation
 ├── ui/
 │   ├── settingsTab.ts      # Settings UI
 │   ├── statusBar.ts        # Status bar component
+│   ├── progressView.ts     # Initial indexing progress view
+│   ├── janitorProgressModal.ts  # Deduplication progress UI
 │   └── chatView.ts         # Chat interface (Phase 3)
 ├── mcp/
 │   └── server.ts           # MCP server (Phase 4)
@@ -222,12 +275,15 @@ interface DocumentMetadata {
 ### Phase 1: Core Infrastructure (Week 1)
 - [x] Project setup (already done: p-queue, @google/genai, MCP SDK)
 - [ ] State management (`state.ts`, `stateManager.ts`)
+- [ ] Runner state management (`runnerState.ts`) - **Desktop only**
 - [ ] Gemini service (`geminiService.ts`)
 - [ ] Hash utilities (`hashUtils.ts`)
-- [ ] Basic settings UI (API key input)
+- [ ] Basic settings UI (API key input + runner toggle)
 - [ ] Store discovery/creation
 
-**Deliverable:** Can create a store and persist basic settings
+**Deliverable:** Can create a store, persist basic settings, and configure runner
+
+**IMPORTANT:** Plugin requires `isDesktopOnly: true` in manifest.json due to Node.js dependencies (fs, path, os, crypto)
 
 ### Phase 2: Indexing Engine (Week 2)
 - [ ] Index manager (`indexManager.ts`)
@@ -508,17 +564,36 @@ export class GeminiService {
 
   /**
    * List all documents in a store
+   *
+   * IMPORTANT: Handles pagination properly. The API has a maximum page size of 20 documents.
+   * For vaults with 1,000+ notes, this will make 50+ API calls to fetch all documents.
+   *
+   * Performance: Fetching 5,000 documents (250 pages) takes ~10-15 seconds.
+   * This is still much faster than 5,000 individual documents.get() calls.
    */
   async listDocuments(storeName: string): Promise<any[]> {
     const docs: any[] = [];
-    const response = await this.ai.fileSearchStores.documents.list({
-      parent: storeName,
-      config: { pageSize: 100 }
-    });
+    let pageToken: string | undefined = undefined;
 
-    for await (const doc of response) {
-      docs.push(doc);
-    }
+    do {
+      const response = await this.ai.fileSearchStores.documents.list({
+        parent: storeName,
+        config: {
+          pageSize: 20, // Maximum allowed by API
+          pageToken: pageToken
+        }
+      });
+
+      // Collect documents from this page
+      for await (const doc of response) {
+        docs.push(doc);
+      }
+
+      // Get next page token (if any)
+      // Note: SDK may expose nextPageToken differently, adjust as needed
+      pageToken = response.nextPageToken;
+
+    } while (pageToken);
 
     return docs;
   }
@@ -615,6 +690,7 @@ export class IndexManager {
   private gemini: GeminiService;
   private vaultName: string;
   private queue: PQueue;
+  private janitor: Janitor;
   private onProgress?: (current: number, total: number, status: string) => void;
 
   private stats = {
@@ -634,6 +710,14 @@ export class IndexManager {
 
     const settings = this.state.getSettings();
     this.queue = new PQueue({ concurrency: settings.maxConcurrentUploads });
+
+    // Initialize Janitor
+    this.janitor = new Janitor({
+      geminiService: this.gemini,
+      stateManager: this.state,
+      storeName: settings.storeName,
+      onProgress: (msg) => console.log(`[Janitor] ${msg}`),
+    });
   }
 
   /**
@@ -811,25 +895,85 @@ export class IndexManager {
   /**
    * Private: Queue a job to index a file
    * Accepts pre-read content and hash to avoid double-reading
+   *
+   * Includes retry logic with exponential backoff for transient errors
    */
   private queueIndexJob(file: TFile, content: string, contentHash: string): void {
     this.queue.add(async () => {
-      try {
-        await this.indexFile(file, content, contentHash);
-        this.stats.completed++;
-      } catch (err) {
-        this.stats.failed++;
-        console.error(`Failed to index ${file.path}:`, err);
-      } finally {
-        this.stats.pending--;
-        this.updateProgress('Indexing');
+      const maxRetries = 3;
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          await this.indexFile(file, content, contentHash);
+          this.stats.completed++;
+          return; // Success, exit retry loop
+        } catch (err) {
+          lastError = err as Error;
+
+          // Check if error is retryable (network, rate limit, etc.)
+          const isRetryable = this.isRetryableError(err);
+
+          if (!isRetryable || attempt === maxRetries - 1) {
+            // Not retryable or final attempt, fail permanently
+            break;
+          }
+
+          // Exponential backoff: 2^attempt * 1000ms (1s, 2s, 4s)
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`Retry ${attempt + 1}/${maxRetries} for ${file.path} after ${delay}ms`);
+          await this.delay(delay);
+        }
       }
+
+      // All retries failed
+      this.stats.failed++;
+      console.error(`Failed to index ${file.path} after ${maxRetries} attempts:`, lastError);
+
+      // Mark as error in state
+      const state = this.state.getDocState(file.path);
+      if (state) {
+        state.status = 'error';
+        state.errorMessage = lastError?.message || 'Unknown error';
+        this.state.setDocState(file.path, state);
+      }
+
+      this.stats.pending--;
+      this.updateProgress('Indexing');
     });
+  }
+
+  /**
+   * Private: Check if an error is retryable
+   */
+  private isRetryableError(err: any): boolean {
+    // Network errors, timeouts, rate limits are retryable
+    const message = err?.message?.toLowerCase() || '';
+
+    return (
+      message.includes('network') ||
+      message.includes('timeout') ||
+      message.includes('rate limit') ||
+      message.includes('429') ||
+      message.includes('503') ||
+      message.includes('econnreset') ||
+      message.includes('enotfound')
+    );
+  }
+
+  /**
+   * Private: Delay helper
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
    * Private: Index a single file
    * Accepts pre-read content and hash to avoid re-reading
+   *
+   * SYNC CONFLICT PREVENTION: If local state has no ID, checks remote for existing document
+   * before creating a new one. This prevents duplicates during multi-device sync.
    */
   private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
     const pathHash = await computePathHash(file.path);
@@ -847,13 +991,28 @@ export class IndexManager {
       ...tags.map(tag => ({ key: 'tag', stringValue: tag })),
     ];
 
-    // Delete old document if exists
+    // Check if local state has a document ID
     const existingState = this.state.getDocState(file.path);
-    if (existingState?.geminiDocumentName) {
+    let geminiDocumentName = existingState?.geminiDocumentName;
+
+    // SYNC CONFLICT PREVENTION: If no local ID, check if remote document exists
+    if (!geminiDocumentName) {
+      geminiDocumentName = await this.janitor.findExistingDocument(pathHash);
+
+      if (geminiDocumentName) {
+        // Remote document exists! This is a stale local state situation.
+        // Adopt the remote ID instead of creating a duplicate.
+        console.log(`[IndexManager] Adopting existing document for ${file.path}: ${geminiDocumentName}`);
+      }
+    }
+
+    // Delete old document if exists
+    if (geminiDocumentName) {
       try {
-        await this.gemini.deleteDocument(existingState.geminiDocumentName);
+        await this.gemini.deleteDocument(geminiDocumentName);
       } catch (err) {
-        // May not exist, ignore
+        // Document may have been deleted by janitor or doesn't exist, ignore
+        console.log(`[IndexManager] Document already deleted or not found: ${geminiDocumentName}`);
       }
     }
 
@@ -961,7 +1120,61 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     containerEl.createEl('h2', { text: 'EzRAG Settings' });
 
-    // API Key
+    // Runner Configuration Section
+    containerEl.createEl('h3', { text: 'Runner Configuration' });
+
+    const runnerConfig = this.plugin.runnerManager.getConfig();
+    const isRunner = runnerConfig.isRunner;
+
+    new Setting(containerEl)
+      .setName('This machine is the runner')
+      .setDesc(
+        'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
+        (runnerConfig.deviceName ? `Currently: ${runnerConfig.deviceName}` : '')
+      )
+      .addToggle(toggle => toggle
+        .setValue(isRunner)
+        .onChange(async (value) => {
+          await this.plugin.runnerManager.setRunner(value);
+
+          // If enabling runner, initialize services
+          if (value && this.plugin.stateManager.getSettings().apiKey) {
+            await this.plugin.initializeServices();
+          }
+
+          // If disabling runner, clear services
+          if (!value) {
+            this.plugin.indexManager = null;
+            this.plugin.geminiService = null;
+          }
+
+          // Refresh settings display
+          this.display();
+
+          new Notice(
+            value
+              ? 'This machine is now the runner. Indexing will start automatically.'
+              : 'Runner disabled. This machine will no longer index files.'
+          );
+        })
+      );
+
+    // If not runner, show message and hide remaining settings
+    if (!isRunner) {
+      containerEl.createDiv({
+        cls: 'setting-item-description',
+        text: 'Indexing controls are hidden because this machine is not the runner. ' +
+              'Enable "This machine is the runner" above to access indexing settings.'
+      });
+      return; // Early return - hide all other settings
+    }
+
+    // Separator
+    containerEl.createEl('hr');
+
+    // API Key Section
+    containerEl.createEl('h3', { text: 'API Configuration' });
+
     new Setting(containerEl)
       .setName('Gemini API Key')
       .setDesc('Your Google Gemini API key (get it from ai.google.dev)')
@@ -971,6 +1184,11 @@ export class EzRAGSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.stateManager.updateSettings({ apiKey: value });
           await this.plugin.saveState();
+
+          // Re-initialize services if runner
+          if (isRunner && value) {
+            await this.plugin.initializeServices();
+          }
         })
       );
 
@@ -1051,21 +1269,14 @@ export class EzRAGSettingTab extends PluginSettingTab {
         })
       );
 
-    // Cleanup Orphans
+    // Run Deduplication (Manual Janitor)
     new Setting(containerEl)
-      .setName('Cleanup Orphans')
-      .setDesc('Remove documents from Gemini that no longer exist in vault')
+      .setName('Run Deduplication')
+      .setDesc('Find and remove duplicate documents created by multi-device sync conflicts')
       .addButton(button => button
-        .setButtonText('Preview')
+        .setButtonText('Run Deduplication')
         .onClick(async () => {
-          await this.plugin.previewOrphans();
-        })
-      )
-      .addButton(button => button
-        .setButtonText('Cleanup')
-        .setWarning()
-        .onClick(async () => {
-          await this.plugin.cleanupOrphans();
+          await this.plugin.runJanitorWithUI();
         })
       );
 
@@ -1119,7 +1330,486 @@ export class EzRAGSettingTab extends PluginSettingTab {
 }
 ```
 
-### 6.5 Main Plugin (`main.ts`)
+### 6.5 Runner Pattern for Multi-Device Vaults
+
+**Problem:** In multi-device setups (laptop + desktop), we need to designate ONE machine as the "runner" responsible for indexing. Otherwise:
+- Multiple devices index simultaneously → API overload
+- Multiple devices run Janitor → wasted API calls
+- Race conditions when both devices try to index the same file change
+
+**Solution:** Store per-machine, per-vault runner state **outside** the vault (not synced).
+
+#### Why Store Outside Vault
+
+Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local state that does **not** sync:
+
+**Storage location:**
+```
+<obsidian-config-dir>/plugins/ezrag/<vault-hash>/runner.json
+```
+
+**Paths by platform:**
+- Windows: `%APPDATA%\Obsidian\plugins\ezrag\<vault-hash>\runner.json`
+- macOS: `~/Library/Application Support/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
+- Linux: `~/.config/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
+
+**Vault isolation:** Hash vault path to create stable directory name per vault.
+
+#### RunnerManager Implementation
+
+```typescript
+// src/runner/runnerState.ts
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import * as crypto from 'crypto';
+
+export interface RunnerConfig {
+  isRunner: boolean;
+  lastEnabledAt?: number;
+  deviceName?: string; // For user reference (hostname)
+}
+
+export class RunnerManager {
+  private configPath: string;
+  private config: RunnerConfig;
+
+  constructor(pluginId: string, vaultPath: string) {
+    this.configPath = this.buildConfigPath(pluginId, vaultPath);
+    this.config = { isRunner: false };
+  }
+
+  async load(): Promise<void> {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const raw = await fs.promises.readFile(this.configPath, 'utf8');
+        this.config = JSON.parse(raw);
+      }
+    } catch (err) {
+      console.error('[RunnerManager] Failed to load config:', err);
+      this.config = { isRunner: false };
+    }
+  }
+
+  async save(): Promise<void> {
+    try {
+      // Ensure directory exists
+      const dir = path.dirname(this.configPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      const json = JSON.stringify(this.config, null, 2);
+      await fs.promises.writeFile(this.configPath, json, 'utf8');
+    } catch (err) {
+      console.error('[RunnerManager] Failed to save config:', err);
+    }
+  }
+
+  isRunner(): boolean {
+    return this.config.isRunner;
+  }
+
+  async setRunner(value: boolean): Promise<void> {
+    this.config.isRunner = value;
+    if (value) {
+      this.config.lastEnabledAt = Date.now();
+      this.config.deviceName = os.hostname();
+    }
+    await this.save();
+  }
+
+  getConfig(): RunnerConfig {
+    return { ...this.config };
+  }
+
+  private buildConfigPath(pluginId: string, vaultPath: string): string {
+    // Get Obsidian config directory by platform
+    const platform = process.platform;
+    let baseConfigDir: string;
+
+    if (platform === 'win32') {
+      baseConfigDir = path.join(
+        process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'),
+        'Obsidian'
+      );
+    } else if (platform === 'darwin') {
+      baseConfigDir = path.join(
+        os.homedir(),
+        'Library',
+        'Application Support',
+        'Obsidian'
+      );
+    } else {
+      // Linux
+      baseConfigDir = path.join(
+        process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'),
+        'Obsidian'
+      );
+    }
+
+    // Create stable vault-specific key using hash
+    const vaultKey = this.hashVaultPath(vaultPath);
+
+    return path.join(baseConfigDir, 'plugins', pluginId, vaultKey, 'runner.json');
+  }
+
+  private hashVaultPath(vaultPath: string): string {
+    // SHA-256 hash of vault path, take first 16 chars
+    return crypto
+      .createHash('sha256')
+      .update(vaultPath)
+      .digest('hex')
+      .substring(0, 16);
+  }
+}
+```
+
+#### Runner Behavior
+
+**When runner is enabled:**
+- Automatic indexing on file changes
+- Manual Janitor available in settings
+- Reconciliation on startup
+
+**When runner is disabled:**
+- No automatic indexing
+- Vault events ignored
+- Settings show: "Indexing controls hidden - not the runner"
+
+**User workflow:**
+1. Install plugin on both Laptop and Desktop
+2. Set API key on both (syncs via vault data)
+3. Enable "This machine is the runner" on Laptop only
+4. Desktop will index read-only, Laptop does all indexing work
+
+---
+
+### 6.6 Janitor Progress Modal
+
+**Manual deduplication UI** shown when user clicks "Run Deduplication" in settings.
+
+```typescript
+// src/ui/janitorProgressModal.ts
+import { App, Modal, Notice } from 'obsidian';
+import { JanitorStats } from '../indexing/janitor';
+
+export class JanitorProgressModal extends Modal {
+  private stats: JanitorStats;
+  private phaseEl!: HTMLElement;
+  private progressEl!: HTMLElement;
+  private statsEl!: HTMLElement;
+  private currentActionEl!: HTMLElement;
+  private closeButtonEl!: HTMLButtonElement;
+  private isDone: boolean = false;
+
+  constructor(app: App) {
+    super(app);
+    this.stats = {
+      totalRemoteDocs: 0,
+      duplicatesFound: 0,
+      duplicatesDeleted: 0,
+      stateUpdated: 0,
+      orphansDeleted: 0,
+    };
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'Deduplication Progress' });
+
+    // Phase indicator
+    this.phaseEl = contentEl.createDiv({ cls: 'janitor-phase' });
+
+    // Progress summary
+    this.progressEl = contentEl.createDiv({ cls: 'janitor-progress' });
+
+    // Stats display
+    this.statsEl = contentEl.createDiv({ cls: 'janitor-stats' });
+
+    // Current action
+    this.currentActionEl = contentEl.createDiv({ cls: 'janitor-current' });
+
+    // Close button (disabled until complete)
+    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+    this.closeButtonEl = buttonContainer.createEl('button', { text: 'Close' });
+    this.closeButtonEl.disabled = true;
+    this.closeButtonEl.addEventListener('click', () => this.close());
+
+    this.render();
+  }
+
+  updateStats(stats: Partial<JanitorStats>, currentAction?: string) {
+    this.stats = { ...this.stats, ...stats };
+    if (currentAction) {
+      this.currentActionEl.setText(currentAction);
+    }
+    this.render();
+  }
+
+  markComplete() {
+    this.isDone = true;
+    this.currentActionEl.setText('');
+    this.render();
+    this.closeButtonEl.disabled = false;
+  }
+
+  markFailed(error: string) {
+    this.isDone = true;
+    this.phaseEl.setText('Deduplication failed');
+    this.currentActionEl.setText(`Error: ${error}`);
+    this.closeButtonEl.disabled = false;
+  }
+
+  private render() {
+    // Phase
+    if (!this.isDone) {
+      this.phaseEl.setText('Running deduplication...');
+    } else {
+      this.phaseEl.setText('Deduplication complete!');
+    }
+
+    // Progress summary
+    this.progressEl.setText(
+      `Scanned: ${this.stats.totalRemoteDocs} documents`
+    );
+
+    // Stats
+    const statsList = [
+      `Duplicates found: ${this.stats.duplicatesFound}`,
+      `Duplicates deleted: ${this.stats.duplicatesDeleted}`,
+      `State updates: ${this.stats.stateUpdated}`,
+    ];
+    this.statsEl.setText(statsList.join('\n'));
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+```
+
+---
+
+### 6.7 Initial Indexing Progress View (`progressView.ts`)
+
+**Problem:** For vaults with 1,000+ notes, initial indexing can take hours. The status bar alone is insufficient for such a large operation.
+
+**Solution:** Dedicated modal view that shows detailed progress during initial indexing.
+
+```typescript
+// src/ui/progressView.ts
+import { App, Modal, Notice } from 'obsidian';
+
+export interface ProgressStats {
+  phase: 'scanning' | 'indexing' | 'complete';
+  scannedFiles: number;
+  totalFiles: number;
+  indexedFiles: number;
+  filesToIndex: number;
+  failedFiles: number;
+  currentFile?: string;
+  estimatedTimeRemaining?: number; // seconds
+}
+
+export class ProgressModal extends Modal {
+  private stats: ProgressStats;
+  private contentEl: HTMLElement;
+  private isPaused: boolean = false;
+  private onPause?: () => void;
+  private onResume?: () => void;
+  private onCancel?: () => void;
+
+  constructor(app: App, options?: {
+    onPause?: () => void;
+    onResume?: () => void;
+    onCancel?: () => void;
+  }) {
+    super(app);
+    this.onPause = options?.onPause;
+    this.onResume = options?.onResume;
+    this.onCancel = options?.onCancel;
+
+    this.stats = {
+      phase: 'scanning',
+      scannedFiles: 0,
+      totalFiles: 0,
+      indexedFiles: 0,
+      filesToIndex: 0,
+      failedFiles: 0,
+    };
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'EzRAG Initial Indexing' });
+
+    // Phase indicator
+    this.phaseEl = contentEl.createDiv({ cls: 'ezrag-progress-phase' });
+
+    // Progress bar
+    this.progressBarEl = contentEl.createDiv({ cls: 'ezrag-progress-bar-container' });
+    this.progressBarFillEl = this.progressBarEl.createDiv({ cls: 'ezrag-progress-bar-fill' });
+
+    // Stats display
+    this.statsEl = contentEl.createDiv({ cls: 'ezrag-progress-stats' });
+
+    // Current file
+    this.currentFileEl = contentEl.createDiv({ cls: 'ezrag-progress-current' });
+
+    // Time estimate
+    this.timeEl = contentEl.createDiv({ cls: 'ezrag-progress-time' });
+
+    // Action buttons
+    const buttonContainer = contentEl.createDiv({ cls: 'ezrag-progress-buttons' });
+
+    this.pauseButton = buttonContainer.createEl('button', { text: 'Pause' });
+    this.pauseButton.addEventListener('click', () => this.togglePause());
+
+    this.cancelButton = buttonContainer.createEl('button', {
+      text: 'Cancel',
+      cls: 'mod-warning'
+    });
+    this.cancelButton.addEventListener('click', () => this.cancel());
+
+    this.closeButton = buttonContainer.createEl('button', {
+      text: 'Run in Background',
+      cls: 'mod-cta'
+    });
+    this.closeButton.addEventListener('click', () => this.close());
+
+    // Initial render
+    this.render();
+  }
+
+  updateStats(stats: Partial<ProgressStats>) {
+    this.stats = { ...this.stats, ...stats };
+    this.render();
+  }
+
+  private render() {
+    // Phase indicator
+    const phaseText = {
+      scanning: 'Phase 1: Scanning files...',
+      indexing: 'Phase 2: Indexing notes...',
+      complete: 'Indexing complete!',
+    }[this.stats.phase];
+    this.phaseEl.setText(phaseText);
+
+    // Progress bar
+    let progress = 0;
+    if (this.stats.phase === 'scanning') {
+      progress = this.stats.totalFiles > 0
+        ? (this.stats.scannedFiles / this.stats.totalFiles) * 100
+        : 0;
+    } else if (this.stats.phase === 'indexing') {
+      progress = this.stats.filesToIndex > 0
+        ? (this.stats.indexedFiles / this.stats.filesToIndex) * 100
+        : 0;
+    } else {
+      progress = 100;
+    }
+
+    this.progressBarFillEl.style.width = `${progress}%`;
+
+    // Stats display
+    if (this.stats.phase === 'scanning') {
+      this.statsEl.setText(
+        `Scanned: ${this.stats.scannedFiles} / ${this.stats.totalFiles} files`
+      );
+    } else if (this.stats.phase === 'indexing') {
+      this.statsEl.setText(
+        `Indexed: ${this.stats.indexedFiles} / ${this.stats.filesToIndex} files\n` +
+        `Failed: ${this.stats.failedFiles}`
+      );
+    } else {
+      this.statsEl.setText(
+        `Successfully indexed ${this.stats.indexedFiles} files\n` +
+        `Failed: ${this.stats.failedFiles}`
+      );
+    }
+
+    // Current file
+    if (this.stats.currentFile) {
+      this.currentFileEl.setText(`Current: ${this.stats.currentFile}`);
+    } else {
+      this.currentFileEl.setText('');
+    }
+
+    // Time estimate
+    if (this.stats.estimatedTimeRemaining) {
+      const minutes = Math.floor(this.stats.estimatedTimeRemaining / 60);
+      const seconds = this.stats.estimatedTimeRemaining % 60;
+      this.timeEl.setText(
+        `Estimated time remaining: ${minutes}m ${seconds}s`
+      );
+    } else {
+      this.timeEl.setText('');
+    }
+
+    // Update button states
+    if (this.stats.phase === 'complete') {
+      this.pauseButton.disabled = true;
+      this.cancelButton.disabled = true;
+      this.closeButton.setText('Close');
+    }
+  }
+
+  private togglePause() {
+    this.isPaused = !this.isPaused;
+
+    if (this.isPaused) {
+      this.pauseButton.setText('Resume');
+      if (this.onPause) this.onPause();
+    } else {
+      this.pauseButton.setText('Pause');
+      if (this.onResume) this.onResume();
+    }
+  }
+
+  private cancel() {
+    if (this.onCancel) {
+      this.onCancel();
+    }
+    this.close();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+```
+
+**Usage in IndexManager:**
+
+```typescript
+// In reconcileOnStartup, detect if this is a large initial index:
+async reconcileOnStartup(): Promise<void> {
+  const files = this.getIndexableFiles();
+
+  this.stats.total = files.length;
+  this.stats.completed = 0;
+  this.stats.failed = 0;
+  this.stats.pending = 0;
+
+  // Detect if this is a "first run" situation
+  const isFirstRun = files.length > 100 &&
+                     Object.keys(this.state.getAllDocStates()).length === 0;
+
+  if (isFirstRun && this.onLargeIndexStart) {
+    // Notify main plugin to show progress modal
+    this.onLargeIndexStart(files.length);
+  }
+
+  // ... rest of scanning logic
+}
+```
+
+### 6.8 Main Plugin (`main.ts`)
 
 ```typescript
 // src/main.ts
@@ -1127,10 +1817,14 @@ import { App, Modal, Plugin, TFile, Notice } from 'obsidian';
 import { StateManager, DEFAULT_DATA } from './state/state';
 import { GeminiService } from './gemini/geminiService';
 import { IndexManager } from './indexing/indexManager';
+import { RunnerManager } from './runner/runnerState';
+import { Janitor } from './indexing/janitor';
+import { JanitorProgressModal } from './ui/janitorProgressModal';
 import { EzRAGSettingTab } from './ui/settingsTab';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager: StateManager;
+  runnerManager: RunnerManager;
   geminiService: GeminiService | null = null;
   indexManager: IndexManager | null = null;
   statusBarItem: HTMLElement | null = null;
@@ -1153,9 +1847,20 @@ export default class EzRAGPlugin extends Plugin {
     }
     this.stateManager = new StateManager(savedData || DEFAULT_DATA);
 
-    // Initialize Gemini service if API key is set
+    // Load runner state (per-machine, per-vault, non-synced)
+    const vaultPath = this.app.vault.adapter.getBasePath?.() || this.app.vault.getName();
+    this.runnerManager = new RunnerManager(this.manifest.id, vaultPath);
+    await this.runnerManager.load();
+
+    // FIRST-RUN ONBOARDING: Check if API key is set
     const settings = this.stateManager.getSettings();
-    if (settings.apiKey) {
+    const isFirstRun = !settings.apiKey;
+
+    if (isFirstRun) {
+      // Show welcome notice with action button
+      this.showFirstRunWelcome();
+    } else if (this.runnerManager.isRunner()) {
+      // Only initialize services on the runner machine
       await this.initializeServices();
     }
 
@@ -1164,10 +1869,16 @@ export default class EzRAGPlugin extends Plugin {
 
     // Add status bar
     this.statusBarItem = this.addStatusBarItem();
-    this.updateStatusBar('Idle');
+    this.updateStatusBar(this.getStatusBarText());
 
     // Register vault events after layout is ready to avoid processing existing files on startup
+    // ONLY REGISTER IF THIS MACHINE IS THE RUNNER
     this.app.workspace.onLayoutReady(() => {
+      if (!this.runnerManager.isRunner()) {
+        console.log('[EzRAG] Not the runner machine, skipping vault event registration');
+        return;
+      }
+
       this.registerEvent(
         this.app.vault.on('create', (file) => {
           if (file instanceof TFile) {
@@ -1200,24 +1911,120 @@ export default class EzRAGPlugin extends Plugin {
         })
       );
 
-      // Run startup reconciliation after layout is ready
+      // Run startup reconciliation after layout is ready (only on runner)
       if (this.indexManager) {
         this.indexManager.reconcileOnStartup();
       }
     });
 
-    // Add commands
+    // Add commands (only available if runner)
     this.addCommand({
       id: 'rebuild-index',
       name: 'Rebuild Index',
-      callback: () => this.rebuildIndex(),
+      checkCallback: (checking) => {
+        if (!this.runnerManager.isRunner()) return false;
+        if (!checking) this.rebuildIndex();
+        return true;
+      },
     });
 
     this.addCommand({
       id: 'cleanup-orphans',
       name: 'Cleanup Orphaned Documents',
-      callback: () => this.cleanupOrphans(),
+      checkCallback: (checking) => {
+        if (!this.runnerManager.isRunner()) return false;
+        if (!checking) this.cleanupOrphans();
+        return true;
+      },
     });
+
+    this.addCommand({
+      id: 'run-janitor',
+      name: 'Run Deduplication',
+      checkCallback: (checking) => {
+        if (!this.runnerManager.isRunner()) return false;
+        if (!checking) this.runJanitorWithUI();
+        return true;
+      },
+    });
+  }
+
+  /**
+   * Show first-run welcome modal
+   */
+  private showFirstRunWelcome(): void {
+    const modal = new FirstRunModal(this.app, () => {
+      // Open settings when user clicks the button
+      this.app.setting.open();
+      this.app.setting.openTabById(this.manifest.id);
+    });
+    modal.open();
+  }
+
+  /**
+   * Run Janitor deduplication with progress UI (manual trigger only)
+   */
+  async runJanitorWithUI(): Promise<void> {
+    if (!this.runnerManager.isRunner()) {
+      new Notice('This machine is not configured as the runner. Enable it in settings first.');
+      return;
+    }
+
+    if (!this.indexManager || !this.geminiService) {
+      new Notice('Service not initialized. Set API key first.');
+      return;
+    }
+
+    const modal = new JanitorProgressModal(this.app);
+    modal.open();
+
+    try {
+      const janitor = new Janitor({
+        geminiService: this.geminiService,
+        stateManager: this.stateManager,
+        storeName: this.stateManager.getSettings().storeName,
+        onProgress: (msg) => {
+          // Update modal with progress messages
+          console.log(`[Janitor] ${msg}`);
+          modal.updateStats({}, msg);
+        },
+      });
+
+      const stats = await janitor.run();
+
+      modal.updateStats(stats);
+      modal.markComplete();
+
+      if (stats.duplicatesDeleted > 0 || stats.stateUpdated > 0) {
+        await this.saveState();
+      }
+
+      new Notice(
+        `Deduplication complete: ${stats.duplicatesDeleted} duplicates removed, ` +
+        `${stats.stateUpdated} state updates`
+      );
+    } catch (err) {
+      console.error('[EzRAG] Janitor failed:', err);
+      modal.markFailed(err.message || 'Unknown error');
+      new Notice('Deduplication failed. Check console for details.');
+    }
+  }
+
+  /**
+   * Get status bar text based on current state
+   */
+  private getStatusBarText(): string {
+    const settings = this.stateManager.getSettings();
+
+    if (!settings.apiKey) {
+      return 'EzRAG: Setup required';
+    }
+
+    if (!this.runnerManager.isRunner()) {
+      return 'EzRAG: Not runner';
+    }
+
+    return 'EzRAG: Idle';
   }
 
   async onExternalSettingsChange() {
@@ -1458,6 +2265,55 @@ Updated: ${new Date(store.updateTime).toLocaleString()}
 }
 
 /**
+ * First-run welcome modal
+ */
+class FirstRunModal extends Modal {
+  private onOpenSettings: () => void;
+
+  constructor(app: App, onOpenSettings: () => void) {
+    super(app);
+    this.onOpenSettings = onOpenSettings;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h2', { text: 'Welcome to EzRAG!' });
+
+    contentEl.createEl('p', {
+      text: 'EzRAG indexes your Obsidian notes into Google Gemini\'s File Search API, enabling semantic search and chat with your notes.'
+    });
+
+    contentEl.createEl('p', {
+      text: 'To get started, you need to:'
+    });
+
+    const list = contentEl.createEl('ol');
+    list.createEl('li', { text: 'Get a Google Gemini API key from ai.google.dev' });
+    list.createEl('li', { text: 'Add it to EzRAG settings' });
+    list.createEl('li', { text: 'Let EzRAG index your notes' });
+
+    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
+
+    const settingsButton = buttonContainer.createEl('button', {
+      text: 'Open Settings',
+      cls: 'mod-cta'
+    });
+    settingsButton.addEventListener('click', () => {
+      this.close();
+      this.onOpenSettings();
+    });
+
+    const cancelButton = buttonContainer.createEl('button', { text: 'Later' });
+    cancelButton.addEventListener('click', () => this.close());
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/**
  * Confirmation modal for destructive actions
  */
 class ConfirmDeleteModal extends Modal {
@@ -1500,6 +2356,244 @@ class ConfirmDeleteModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
   }
+}
+```
+
+### 6.4 Janitor Pattern for Deduplication
+
+**Problem:** Multi-device sync can cause duplicate documents when local `data.json` state is stale.
+
+**Scenario:**
+1. User modifies `NoteA.md` on Laptop
+2. Laptop's `data.json` is stale (no ID found for this file)
+3. Laptop uploads a new document → creates `doc-123`
+4. Desktop (also with stale `data.json`) does the same → creates `doc-456`
+5. Result: Two remote documents for the same note
+
+**Solution:** Background "Janitor" job that periodically deduplicates.
+
+#### Janitor Implementation
+
+```typescript
+// src/indexing/janitor.ts
+import { GeminiService } from '../gemini/geminiService';
+import { StateManager, IndexedDocState } from '../state/state';
+
+export interface JanitorOptions {
+  geminiService: GeminiService;
+  stateManager: StateManager;
+  storeName: string;
+  onProgress?: (message: string) => void;
+}
+
+export interface JanitorStats {
+  totalRemoteDocs: number;
+  duplicatesFound: number;
+  duplicatesDeleted: number;
+  stateUpdated: number;
+  orphansDeleted: number;
+}
+
+export class Janitor {
+  private gemini: GeminiService;
+  private state: StateManager;
+  private storeName: string;
+  private onProgress?: (message: string) => void;
+
+  constructor(options: JanitorOptions) {
+    this.gemini = options.geminiService;
+    this.state = options.stateManager;
+    this.storeName = options.storeName;
+    this.onProgress = options.onProgress;
+  }
+
+  /**
+   * Run full deduplication and orphan cleanup
+   *
+   * Performance: Listing documents requires pagination (20 docs/page max).
+   * For 5,000 documents:
+   *   - 250 API calls (one per page)
+   *   - ~10-15 seconds total
+   *   - Much cheaper than 5,000 individual documents.get() calls
+   *
+   * This overhead is acceptable for periodic background runs (every 30 mins).
+   */
+  async run(): Promise<JanitorStats> {
+    const stats: JanitorStats = {
+      totalRemoteDocs: 0,
+      duplicatesFound: 0,
+      duplicatesDeleted: 0,
+      stateUpdated: 0,
+      orphansDeleted: 0,
+    };
+
+    this.log('Fetching all documents from Gemini...');
+
+    // Fetch all documents from Gemini (just metadata, very fast)
+    const remoteDocs = await this.gemini.listDocuments(this.storeName);
+    stats.totalRemoteDocs = remoteDocs.length;
+
+    this.log(`Found ${remoteDocs.length} remote documents. Building index...`);
+
+    // Build map: PathHash -> DocumentInfo[]
+    const pathHashMap = new Map<string, Array<{
+      docName: string;
+      vaultPath: string;
+      pathHash: string;
+      mtime: number;
+    }>>();
+
+    for (const doc of remoteDocs) {
+      // Extract metadata
+      const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
+      const vaultPathMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path');
+      const mtimeMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_mtime');
+
+      if (!pathHashMeta || !vaultPathMeta) {
+        // Not an Obsidian document (or missing metadata), skip
+        continue;
+      }
+
+      const pathHash = pathHashMeta.stringValue!;
+      const vaultPath = vaultPathMeta.stringValue!;
+      const mtime = mtimeMeta?.numericValue || 0;
+
+      if (!pathHashMap.has(pathHash)) {
+        pathHashMap.set(pathHash, []);
+      }
+
+      pathHashMap.get(pathHash)!.push({
+        docName: doc.name,
+        vaultPath,
+        pathHash,
+        mtime,
+      });
+    }
+
+    this.log('Checking for duplicates and orphans...');
+
+    // Process each pathHash group
+    for (const [pathHash, docs] of pathHashMap) {
+      if (docs.length === 1) {
+        // No duplicates, check if local state matches
+        const doc = docs[0];
+        const localState = this.state.getDocState(doc.vaultPath);
+
+        if (localState && localState.geminiDocumentName !== doc.docName) {
+          // Local state points to wrong document, update it
+          localState.geminiDocumentName = doc.docName;
+          this.state.setDocState(doc.vaultPath, localState);
+          stats.stateUpdated++;
+        }
+      } else {
+        // DUPLICATES FOUND
+        stats.duplicatesFound++;
+        this.log(`Found ${docs.length} duplicates for ${docs[0].vaultPath}`);
+
+        // Sort by mtime (descending), keep the newest
+        docs.sort((a, b) => b.mtime - a.mtime);
+        const winner = docs[0];
+        const losers = docs.slice(1);
+
+        this.log(`  Keeping: ${winner.docName} (mtime: ${winner.mtime})`);
+
+        // Delete older duplicates
+        for (const loser of losers) {
+          try {
+            this.log(`  Deleting: ${loser.docName} (mtime: ${loser.mtime})`);
+            await this.gemini.deleteDocument(loser.docName);
+            stats.duplicatesDeleted++;
+          } catch (err) {
+            console.error(`Failed to delete duplicate ${loser.docName}:`, err);
+          }
+        }
+
+        // Update local state to point to winner
+        const localState = this.state.getDocState(winner.vaultPath);
+        if (localState) {
+          localState.geminiDocumentName = winner.docName;
+          this.state.setDocState(winner.vaultPath, localState);
+          stats.stateUpdated++;
+        }
+      }
+    }
+
+    this.log('Janitor run complete!');
+    return stats;
+  }
+
+  /**
+   * Check if a document with this pathHash already exists in Gemini
+   * Used during upload to prevent creating duplicates
+   *
+   * Returns: geminiDocumentName if found, null otherwise
+   */
+  async findExistingDocument(pathHash: string): Promise<string | null> {
+    // Fetch all documents (this is cached by Gemini, fast)
+    const remoteDocs = await this.gemini.listDocuments(this.storeName);
+
+    for (const doc of remoteDocs) {
+      const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
+      if (pathHashMeta?.stringValue === pathHash) {
+        return doc.name;
+      }
+    }
+
+    return null;
+  }
+
+  private log(message: string): void {
+    if (this.onProgress) {
+      this.onProgress(message);
+    }
+  }
+}
+```
+
+#### When to Run the Janitor
+
+**Manual trigger only** (via settings button with dedicated progress UI)
+- User explicitly runs deduplication when needed
+- Shows real-time progress in dedicated modal
+- Only available on the designated "runner" machine (see Section 6.5)
+
+#### Integration with IndexManager
+
+The `IndexManager` should check for existing documents before uploading to prevent creating duplicates in the first place:
+
+```typescript
+// In indexManager.ts, update indexFile method:
+
+private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
+  const pathHash = await computePathHash(file.path);
+  const settings = this.state.getSettings();
+
+  // Check if local state has a document ID
+  const existingState = this.state.getDocState(file.path);
+  let geminiDocumentName = existingState?.geminiDocumentName;
+
+  // SYNC CONFLICT PREVENTION: If no local ID, check if remote document exists
+  if (!geminiDocumentName) {
+    geminiDocumentName = await this.janitor.findExistingDocument(pathHash);
+
+    if (geminiDocumentName) {
+      // Remote document exists! This is a stale local state situation.
+      // Adopt the remote ID instead of creating a duplicate.
+      console.log(`Adopting existing document for ${file.path}: ${geminiDocumentName}`);
+    }
+  }
+
+  // Delete old document if exists
+  if (geminiDocumentName) {
+    try {
+      await this.gemini.deleteDocument(geminiDocumentName);
+    } catch (err) {
+      // Document may have been deleted by janitor, ignore
+      console.log(`Document already deleted: ${geminiDocumentName}`);
+    }
+  }
+
+  // Rest of upload logic...
 }
 ```
 
@@ -1572,12 +2666,16 @@ export async function updateFrontmatter(
 
 ### Example: Query with Metadata Filter
 
+**IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.4).
+
+#### Using generateContent API (string metadataFilter)
+
 ```typescript
-// In chat interface
+// In chat interface - uses generateContent with fileSearch tool
 async function searchWithFilter(query: string, tags?: string[]) {
   const settings = stateManager.getSettings();
 
-  // Build metadata filter
+  // Build metadata filter (string format for generateContent API)
   let metadataFilter = '';
   if (tags && tags.length > 0) {
     const tagFilters = tags.map(tag => `tag="${tag}"`).join(' OR ');
@@ -1603,11 +2701,162 @@ async function searchWithFilter(query: string, tags?: string[]) {
 }
 ```
 
+#### Using documents.query API (metadataFilters array)
+
+```typescript
+// Query a specific document with structured metadataFilters
+async function queryDocumentWithFilters(
+  documentName: string, 
+  query: string, 
+  tags?: string[]
+) {
+  // Build metadataFilters array (structured format for documents.query API)
+  const metadataFilters: Array<{
+    key: string;
+    conditions: Array<{
+      stringValue?: string;
+      int_value?: number;
+      operation: "EQUAL" | "GREATER_EQUAL" | "LESS" | "GREATER" | "LESS_EQUAL";
+    }>;
+  }> = [];
+
+  if (tags && tags.length > 0) {
+    // CRITICAL: Key must include "chunk.custom_metadata." prefix
+    // Multiple string values go in same MetadataFilter (OR logic)
+    metadataFilters.push({
+      key: "chunk.custom_metadata.tag",
+      conditions: tags.map(tag => ({
+        stringValue: tag,
+        operation: "EQUAL"
+      }))
+    });
+  }
+
+  const response = await ai.fileSearchStores.documents.query({
+    name: documentName,
+    config: {
+      query,
+      resultsCount: 10,
+      metadataFilters: metadataFilters.length > 0 ? metadataFilters : undefined
+    }
+  });
+
+  return response;
+}
+
+// Helper function to build tag filters
+function buildTagFilters(tags: string[]): Array<{
+  key: string;
+  conditions: Array<{ stringValue: string; operation: "EQUAL" }>;
+}> {
+  if (!tags || tags.length === 0) return [];
+
+  return [
+    {
+      key: "chunk.custom_metadata.tag", // CRITICAL: Must include prefix
+      conditions: tags.map(tag => ({
+        stringValue: tag,
+        operation: "EQUAL"
+      }))
+    }
+  ];
+}
+```
+
+**Key differences:**
+- `generateContent` API: Uses `metadataFilter` (string, simple syntax)
+- `documents.query` API: Uses `metadataFilters[]` (array, structured objects)
+- **CRITICAL**: For `documents.query`, keys must be prefixed with `"chunk.custom_metadata."`
+- String values for same key go in same MetadataFilter (OR logic)
+- Multiple MetadataFilters are joined with AND logic
+
 ---
 
 ## 8. Implementation Caveats & Notes
 
-### 8.1 Gemini SDK Integration
+### 8.1 Desktop-Only Requirement
+
+**Critical:** This plugin is **desktop-only** and will not work on Obsidian Mobile (iOS/Android).
+
+#### Why Desktop-Only
+
+The `RunnerManager` implementation requires Node.js modules that are not available in mobile environments:
+
+1. **`fs` (File System)**: Reading/writing runner.json outside vault
+2. **`path`**: Cross-platform path manipulation
+3. **`os`**: Hostname detection and home directory access
+4. **`crypto`**: SHA-256 hashing for vault path
+
+**Manifest configuration:**
+```json
+{
+  "id": "ezrag",
+  "name": "EzRAG",
+  "version": "1.0.0",
+  "minAppVersion": "1.6.0",
+  "isDesktopOnly": true,
+  "description": "Index notes into Google Gemini File Search API for semantic search"
+}
+```
+
+#### Mobile Behavior
+
+If a user tries to install on mobile:
+- Obsidian will show a warning: "This plugin is only available on desktop"
+- The plugin will not load at all
+
+#### Multi-Platform Vault Considerations
+
+**Scenario:** User has vault synced across Desktop + Mobile
+
+1. **Desktop (Laptop)**: Plugin installed, runner enabled → indexes files
+2. **Mobile (iPhone)**: Plugin not installed → works normally, just can't use EzRAG features
+3. **Desktop (Work PC)**: Plugin installed, runner disabled → read-only, no indexing
+
+**Key point:** The runner.json file is stored in the system's Obsidian config directory, **not** in the vault, so it won't sync via Obsidian Sync/iCloud/Dropbox. Each desktop machine has its own independent runner state.
+
+#### Future Mobile Support (Optional)
+
+To support mobile in the future, would need to:
+
+1. **Remove Node.js dependencies:**
+   - Replace `fs` with browser APIs or Obsidian's vault adapter
+   - Replace `crypto` with Web Crypto API (already done for content hashing)
+   - Find alternative to storing runner state outside vault
+
+2. **Alternative runner pattern:**
+   - Store runner state in vault (`.obsidian/plugins/ezrag/runner.json`)
+   - Add conflict detection if multiple devices claim runner status
+   - Use device timestamp to auto-resolve conflicts
+
+**Decision:** For MVP, desktop-only is acceptable. Most power users run Obsidian primarily on desktop.
+
+---
+
+### 8.2 Gemini API Limitations
+
+**No metadata filtering during listing:** The Gemini File Search API does **not** support filtering documents by metadata when calling `listDocuments()`. You can only:
+
+1. List **all** documents and examine their metadata in memory
+2. Query a single document by name using `documents.get()`
+3. Use metadata filters during **query operations** (generateContent, documents.query)
+
+**Impact on Architecture:**
+
+- **Janitor Pattern:** Must fetch all documents and build a Map<PathHash, Doc[]> in memory
+- **Sync Conflict Prevention:** When checking if a document exists by pathHash, must list all documents and search in memory
+- **Pagination Overhead:** The API limits page size to 20 documents maximum. For 5,000 documents:
+  - Requires 250 API calls (5,000 / 20 = 250 pages)
+  - Takes ~10-15 seconds to fetch all pages
+  - Each page returns just metadata stubs (not full content), so responses are small
+- **Cost:** Still much cheaper than making 5,000 individual `documents.get()` calls
+- **Tradeoff:** Janitor runs periodically (every 30 mins) + on startup, so this overhead is acceptable
+
+**Why this matters:** The feedback explicitly clarified this limitation. The plan now correctly uses `listDocuments()` with proper pagination and filters in memory, rather than trying to use non-existent metadata filters during listing.
+
+**Optimization Note:** For vaults with 10,000+ documents, consider adding a setting to disable automatic Janitor runs and only run manually. The periodic listing overhead may be noticeable for very large vaults.
+
+### 8.2 Gemini SDK Integration
 
 **SDK API Stability:** The `@google/genai` SDK is still evolving. The `geminiService.ts` layer is designed as a thin integration layer that may need adjustments as the SDK stabilizes. Key areas to watch:
 
@@ -1888,7 +3137,60 @@ With `maxConcurrentUploads: 2`, we have **2 uploads actively polling** at once. 
 
 **Future enhancement:** Per-folder or per-file-size chunking strategies, but for now this is applied globally to all documents.
 
-### 11.3 Store Management Tools
+### 11.3 Polling and Concurrency Model
+
+**Question:** How does concurrency interact with long-running upload operations?
+
+**Answer:** The `maxConcurrentUploads` setting controls **concurrent operations**, not just concurrent upload starts. Each upload job includes polling until completion.
+
+#### How Upload Jobs Work
+
+```typescript
+// A single "upload job" includes the entire lifecycle:
+async function uploadJob() {
+  // 1. Initiate upload
+  let operation = await ai.fileSearchStores.uploadToFileSearchStore({...});
+
+  // 2. Poll until complete (can take 10-60+ seconds)
+  while (!operation.done) {
+    await delay(3000); // Poll every 3 seconds
+    operation = await ai.operations.get({ operation });
+  }
+
+  // 3. Extract result
+  return operation.response.name;
+}
+```
+
+**With `maxConcurrentUploads: 2`:**
+- Two upload jobs can be **actively polling** at the same time
+- If Job A is a large file taking 60 seconds to process, one concurrency slot is "occupied" for that entire duration
+- Job B can start immediately, but Job C must wait until either A or B completes
+
+**Performance Implications:**
+
+- **Smaller files** (~10 KB): Upload + poll ~5-10 seconds per file
+- **Medium files** (~100 KB): Upload + poll ~15-30 seconds per file
+- **Large files** (~1 MB+): Upload + poll ~30-60+ seconds per file
+
+**Why not just increase concurrency to 10?**
+
+- Gemini API has rate limits per API key (not well documented, but conservative is safer)
+- Each polling request counts toward rate limits
+- With 10 concurrent jobs polling every 3 seconds, that's ~200 requests/minute just for polling
+- Risk of hitting 429 rate limit errors and slowing down the entire queue
+
+**Recommended Settings:**
+
+| Vault Size | Concurrent Uploads | Rationale |
+|-----------|-------------------|-----------|
+| < 500 files | 2 | Default, safe for all users |
+| 500-2000 files | 3 | Slightly faster, still conservative |
+| 2000+ files | 4-5 | Maximum safe throughput |
+
+**User Control:** The settings UI allows users to adjust concurrency (1-5) with a slider. Power users with large vaults can increase it, but the default of 2 balances speed and API safety.
+
+### 11.4 Store Management Tools
 
 Users need visibility into their remote FileSearchStores. The following tools are provided:
 
@@ -2205,8 +3507,8 @@ async onload() {
 
 ## 14. Conclusion
 
-This plan provides a complete blueprint for building EzRAG. The phased approach allows incremental delivery of value:
-- **Phase 1**: Basic infrastructure and settings
+This plan provides a complete blueprint for building EzRAG with robust multi-device support. The phased approach allows incremental delivery of value:
+- **Phase 1**: Basic infrastructure and settings (including runner pattern)
 - **Phase 2**: Full indexing and sync (core value)
 - **Phase 3**: In-app chat interface
 - **Phase 4**: MCP server for external tools
@@ -2214,11 +3516,46 @@ This plan provides a complete blueprint for building EzRAG. The phased approach 
 The architecture maintains separation of concerns, making it easy to reuse code between the Obsidian plugin and standalone MCP server. The state management is vault-local and sync-friendly, and the Gemini integration follows best practices for the File Search API.
 
 **Key strengths of this implementation:**
+- ✅ **Multi-device safe**: Runner pattern prevents conflicts when vault is synced across machines
+- ✅ **Deduplication**: Manual Janitor with dedicated UI cleans up sync conflicts
+- ✅ **Resilient**: Retry logic with exponential backoff for transient errors
 - ✅ **Follows Obsidian best practices**: Leverages MetadataCache, prevents startup event flooding, proper resource cleanup
-- ✅ **Performance-optimized**: Single read/hash per file, non-blocking startup reconciliation, minimal overhead
-- ✅ **Cross-platform compatible**: Uses Web Crypto API instead of Node crypto for mobile support
+- ✅ **Performance-optimized**: Single read/hash per file, non-blocking startup reconciliation, minimal overhead, proper pagination
+- ✅ **Desktop-optimized**: Leverages Node.js for reliable per-machine state (marked as desktop-only)
 - ✅ **Robust state management**: Deep merge for nested settings, external settings change handling, atomic operations
-- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation, Obsidian modals for confirmations
+- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation, comprehensive UI feedback
 - ✅ **Well-documented**: Comprehensive implementation caveats and best practices sections
 
-This plan incorporates feedback from Obsidian experts and is based on official developer documentation to ensure correctness, performance, and maintainability.
+### Runner Pattern Summary
+
+The **Runner Pattern** is the critical architectural decision for multi-device vaults:
+
+**Problem:** Multiple devices indexing simultaneously causes:
+- API overload (multiple uploads for same file)
+- Duplicate documents in Gemini
+- Race conditions and sync conflicts
+
+**Solution:**
+1. **Per-machine runner state** stored outside vault (non-synced):
+   - Location: `~/.config/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
+   - Contains: `isRunner` flag + device metadata
+   - Isolated per vault, per machine
+
+2. **Gated indexing**: Only runner machine processes vault events
+   - Non-runner machines: Plugin loaded but inactive
+   - Settings UI: Conditional display based on runner status
+   - Commands: Only available on runner machine
+
+3. **Manual deduplication**: Janitor cleans up any duplicates created during sync edge cases
+   - Triggered manually via settings UI
+   - Shows real-time progress in dedicated modal
+   - Only available on runner machine
+
+**User Experience:**
+- Install plugin on all desktop machines
+- API key syncs via vault data (`.obsidian/plugins/ezrag/data.json`)
+- Enable runner on ONE machine (e.g., laptop)
+- Other machines show read-only status: "Not runner"
+- If duplicates occur (rare), run manual deduplication on runner
+
+This plan incorporates extensive feedback and is production-ready for desktop-only deployments with comprehensive multi-device support.
