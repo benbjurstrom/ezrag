@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "ezrag",
+	"name": "ezrag",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"description": "Turns your vault into a Gemini-powered RAG index with semantic search, in-app chat, and an MCP endpoint so any AI tool can query your notes.",
+	"author": "Ben Bjurstrom",
+	"authorUrl": "https://benbjurstrom.com",
 	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": false
 }
