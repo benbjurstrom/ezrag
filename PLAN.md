@@ -281,9 +281,9 @@ interface DocumentMetadata {
 - [ ] Basic settings UI (API key input + runner toggle)
 - [ ] Store discovery/creation
 
-**Deliverable:** Can create a store, persist basic settings, and configure runner
+**Deliverable:** Can create a store, persist basic settings, and configure runner (desktop only)
 
-**IMPORTANT:** Plugin requires `isDesktopOnly: true` in manifest.json due to Node.js dependencies (fs, path, os, crypto)
+**IMPORTANT:** Plugin works on both desktop and mobile, but runner (indexing) only available on desktop due to Node.js dependencies in RunnerManager
 
 ### Phase 2: Indexing Engine (Week 2)
 - [ ] Index manager (`indexManager.ts`)
@@ -315,7 +315,61 @@ interface DocumentMetadata {
 
 ## 6. Detailed Component Design
 
-### 6.1 State Management (`state.ts`)
+### 6.1 Hash Utilities (`hashUtils.ts`)
+
+**Desktop-only** - Uses Node.js crypto for synchronous, performant hashing.
+
+Since all hashing is used for indexing operations (which only run on the runner machine, which is desktop-only), we can use Node.js crypto throughout for simplicity and performance.
+
+```typescript
+// src/indexing/hashUtils.ts
+import * as crypto from 'crypto';
+
+/**
+ * Compute SHA-256 hash of content
+ *
+ * Uses Node.js crypto (synchronous) instead of Web Crypto (async).
+ * This is simpler and more performant.
+ *
+ * Since hashing is only used during indexing (runner-only, desktop-only),
+ * we don't need to support mobile/browser environments.
+ */
+export function computeContentHash(content: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(content)
+    .digest('hex');
+}
+
+/**
+ * Compute SHA-256 hash of path
+ */
+export function computePathHash(path: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(path)
+    .digest('hex');
+}
+```
+
+**Benefits of Node.js crypto:**
+- ✅ **Synchronous**: No async/await needed, simplifies code
+- ✅ **Faster**: Native implementation, more efficient
+- ✅ **Simpler**: Single import, consistent API
+- ✅ **Desktop-only is fine**: Hashing only happens during indexing (runner-only)
+
+**Usage pattern:**
+```typescript
+// Before (async, Web Crypto)
+const hash = await computeContentHash(content); // slow, complex
+
+// After (sync, Node crypto)
+const hash = computeContentHash(content); // fast, simple
+```
+
+---
+
+### 6.2 State Management (`state.ts`)
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
 
@@ -376,29 +430,6 @@ export const DEFAULT_DATA: PersistedData = {
   index: { docs: {} },
 };
 
-/**
- * Compute SHA-256 hash of content using Web Crypto API
- * Note: Uses Web Crypto instead of Node's crypto for mobile compatibility
- */
-export async function computeContentHash(content: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(content);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Compute SHA-256 hash of path using Web Crypto API
- */
-export async function computePathHash(path: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(path);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 export class StateManager {
   private data: PersistedData;
 
@@ -440,7 +471,7 @@ export class StateManager {
 }
 ```
 
-### 6.2 Gemini Service (`geminiService.ts`)
+### 6.3 Gemini Service (`geminiService.ts`)
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
 
@@ -663,7 +694,7 @@ export class GeminiService {
 }
 ```
 
-### 6.3 Index Manager (`indexManager.ts`)
+### 6.4 Index Manager (`indexManager.ts`)
 
 Orchestrates all indexing operations.
 
@@ -737,7 +768,7 @@ export class IndexManager {
     for (const file of files) {
       try {
         const content = await this.vault.read(file);
-        const contentHash = await computeContentHash(content);
+        const contentHash = computeContentHash(content); // Synchronous now
 
         const state = this.state.getDocState(file.path);
 
@@ -771,7 +802,7 @@ export class IndexManager {
     // Read and hash once
     try {
       const content = await this.vault.read(file);
-      const contentHash = await computeContentHash(content);
+      const contentHash = computeContentHash(content); // Synchronous now
       this.queueIndexJob(file, content, contentHash);
     } catch (err) {
       console.error(`Failed to queue new file ${file.path}:`, err);
@@ -788,7 +819,7 @@ export class IndexManager {
 
     try {
       const content = await this.vault.read(file);
-      const contentHash = await computeContentHash(content);
+      const contentHash = computeContentHash(content); // Synchronous now
 
       const state = this.state.getDocState(file.path);
 
@@ -976,7 +1007,7 @@ export class IndexManager {
    * before creating a new one. This prevents duplicates during multi-device sync.
    */
   private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
-    const pathHash = await computePathHash(file.path);
+    const pathHash = computePathHash(file.path); // Synchronous now
     const settings = this.state.getSettings();
 
     // Extract tags from frontmatter using MetadataCache
@@ -1103,7 +1134,7 @@ export class IndexManager {
 
 ```typescript
 // src/ui/settingsTab.ts
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Platform, PluginSettingTab, Setting } from 'obsidian';
 import EzRAGPlugin from '../main';
 
 export class EzRAGSettingTab extends PluginSettingTab {
@@ -1120,25 +1151,26 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     containerEl.createEl('h2', { text: 'EzRAG Settings' });
 
-    // Runner Configuration Section
-    containerEl.createEl('h3', { text: 'Runner Configuration' });
+    // Runner Configuration Section (Desktop only)
+    if (Platform.isDesktopApp) {
+      containerEl.createEl('h3', { text: 'Runner Configuration' });
 
-    const runnerConfig = this.plugin.runnerManager.getConfig();
-    const isRunner = runnerConfig.isRunner;
+      const runnerConfig = this.plugin.runnerManager.getConfig();
+      const isRunner = runnerConfig.isRunner;
 
-    new Setting(containerEl)
-      .setName('This machine is the runner')
-      .setDesc(
-        'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
-        (runnerConfig.deviceName ? `Currently: ${runnerConfig.deviceName}` : '')
-      )
-      .addToggle(toggle => toggle
-        .setValue(isRunner)
-        .onChange(async (value) => {
-          await this.plugin.runnerManager.setRunner(value);
+      new Setting(containerEl)
+        .setName('This machine is the runner')
+        .setDesc(
+          'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
+          (runnerConfig.deviceName ? `Currently: ${runnerConfig.deviceName}` : '')
+        )
+        .addToggle(toggle => toggle
+          .setValue(isRunner)
+          .onChange(async (value) => {
+            await this.plugin.runnerManager.setRunner(value);
 
-          // If enabling runner, initialize services
-          if (value && this.plugin.stateManager.getSettings().apiKey) {
+            // If enabling runner, initialize services
+            if (value && this.plugin.stateManager.getSettings().apiKey) {
             await this.plugin.initializeServices();
           }
 
@@ -1159,18 +1191,28 @@ export class EzRAGSettingTab extends PluginSettingTab {
         })
       );
 
-    // If not runner, show message and hide remaining settings
-    if (!isRunner) {
+      // If not runner, show message and hide remaining settings
+      if (!isRunner) {
+        containerEl.createDiv({
+          cls: 'setting-item-description',
+          text: 'Indexing controls are hidden because this machine is not the runner. ' +
+                'Enable "This machine is the runner" above to access indexing settings.'
+        });
+        return; // Early return - hide all other settings
+      }
+
+      // Separator
+      containerEl.createEl('hr');
+    } else {
+      // Mobile platform - runner not available
+      containerEl.createEl('h3', { text: 'Mobile Platform' });
       containerEl.createDiv({
         cls: 'setting-item-description',
-        text: 'Indexing controls are hidden because this machine is not the runner. ' +
-              'Enable "This machine is the runner" above to access indexing settings.'
+        text: 'Indexing is not available on mobile devices. The runner can only be enabled on desktop. ' +
+              'You can still use chat and query features once they are implemented.'
       });
-      return; // Early return - hide all other settings
+      return; // Early return - no indexing settings on mobile
     }
-
-    // Separator
-    containerEl.createEl('hr');
 
     // API Key Section
     containerEl.createEl('h3', { text: 'API Configuration' });
@@ -1330,7 +1372,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
 }
 ```
 
-### 6.5 Runner Pattern for Multi-Device Vaults
+### 6.6 Runner Pattern for Multi-Device Vaults
 
 **Problem:** In multi-device setups (laptop + desktop), we need to designate ONE machine as the "runner" responsible for indexing. Otherwise:
 - Multiple devices index simultaneously → API overload
@@ -1813,7 +1855,7 @@ async reconcileOnStartup(): Promise<void> {
 
 ```typescript
 // src/main.ts
-import { App, Modal, Plugin, TFile, Notice } from 'obsidian';
+import { App, Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
 import { StateManager, DEFAULT_DATA } from './state/state';
 import { GeminiService } from './gemini/geminiService';
 import { IndexManager } from './indexing/indexManager';
@@ -1824,7 +1866,7 @@ import { EzRAGSettingTab } from './ui/settingsTab';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager: StateManager;
-  runnerManager: RunnerManager;
+  runnerManager: RunnerManager | null = null; // Only on desktop
   geminiService: GeminiService | null = null;
   indexManager: IndexManager | null = null;
   statusBarItem: HTMLElement | null = null;
@@ -1848,9 +1890,12 @@ export default class EzRAGPlugin extends Plugin {
     this.stateManager = new StateManager(savedData || DEFAULT_DATA);
 
     // Load runner state (per-machine, per-vault, non-synced)
-    const vaultPath = this.app.vault.adapter.getBasePath?.() || this.app.vault.getName();
-    this.runnerManager = new RunnerManager(this.manifest.id, vaultPath);
-    await this.runnerManager.load();
+    // ONLY AVAILABLE ON DESKTOP - mobile doesn't support Node.js modules
+    if (Platform.isDesktopApp) {
+      const vaultPath = this.app.vault.adapter.getBasePath?.() || this.app.vault.getName();
+      this.runnerManager = new RunnerManager(this.manifest.id, vaultPath);
+      await this.runnerManager.load();
+    }
 
     // FIRST-RUN ONBOARDING: Check if API key is set
     const settings = this.stateManager.getSettings();
@@ -1859,8 +1904,8 @@ export default class EzRAGPlugin extends Plugin {
     if (isFirstRun) {
       // Show welcome notice with action button
       this.showFirstRunWelcome();
-    } else if (this.runnerManager.isRunner()) {
-      // Only initialize services on the runner machine
+    } else if (this.runnerManager?.isRunner()) {
+      // Only initialize services on the runner machine (desktop only)
       await this.initializeServices();
     }
 
@@ -2359,7 +2404,7 @@ class ConfirmDeleteModal extends Modal {
 }
 ```
 
-### 6.4 Janitor Pattern for Deduplication
+### 6.5 Janitor Pattern for Deduplication
 
 **Problem:** Multi-device sync can cause duplicate documents when local `data.json` state is stale.
 
@@ -2429,7 +2474,9 @@ export class Janitor {
 
     this.log('Fetching all documents from Gemini...');
 
-    // Fetch all documents from Gemini (just metadata, very fast)
+    // Fetch all documents from Gemini with pagination
+    // NOTE: API returns max 20 docs/page (default 10). For 5,000 docs = 250+ API calls
+    // This can take 10-15 seconds for large vaults
     const remoteDocs = await this.gemini.listDocuments(this.storeName);
     stats.totalRemoteDocs = remoteDocs.length;
 
@@ -2526,10 +2573,16 @@ export class Janitor {
    * Check if a document with this pathHash already exists in Gemini
    * Used during upload to prevent creating duplicates
    *
+   * PERFORMANCE WARNING: This fetches ALL documents with pagination.
+   * - API returns max 20 docs/page (default 10)
+   * - For 5,000 documents = 250+ API calls
+   * - Takes 10-15 seconds for large vaults
+   * - Only called when local state is missing (cold path, rare)
+   *
    * Returns: geminiDocumentName if found, null otherwise
    */
   async findExistingDocument(pathHash: string): Promise<string | null> {
-    // Fetch all documents (this is cached by Gemini, fast)
+    // Fetch all documents (requires pagination: 20 docs/page max)
     const remoteDocs = await this.gemini.listDocuments(this.storeName);
 
     for (const doc of remoteDocs) {
@@ -2565,7 +2618,7 @@ The `IndexManager` should check for existing documents before uploading to preve
 // In indexManager.ts, update indexFile method:
 
 private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
-  const pathHash = await computePathHash(file.path);
+  const pathHash = computePathHash(file.path); // Synchronous now
   const settings = this.state.getSettings();
 
   // Check if local state has a document ID
@@ -2774,18 +2827,31 @@ function buildTagFilters(tags: string[]): Array<{
 
 ## 8. Implementation Caveats & Notes
 
-### 8.1 Desktop-Only Requirement
+### 8.1 Mobile Support & Runner Restrictions
 
-**Critical:** This plugin is **desktop-only** and will not work on Obsidian Mobile (iOS/Android).
+**Plugin Architecture:** The plugin works on both desktop and mobile, but **indexing (runner) is desktop-only**.
 
-#### Why Desktop-Only
+#### What Works on Mobile
 
-The `RunnerManager` implementation requires Node.js modules that are not available in mobile environments:
+- ✅ Plugin loads successfully
+- ✅ Settings UI accessible
+- ✅ API key syncs via vault data
+- ✅ Future: Chat interface (Phase 3)
+- ✅ Future: Query/search features (Phase 3)
+
+#### What's Desktop-Only (Runner)
+
+The **Runner** (indexing engine) requires Node.js modules:
 
 1. **`fs` (File System)**: Reading/writing runner.json outside vault
 2. **`path`**: Cross-platform path manipulation
 3. **`os`**: Hostname detection and home directory access
-4. **`crypto`**: SHA-256 hashing for vault path
+4. **`crypto`**: SHA-256 hashing (for content and path hashing)
+
+**Implementation:**
+- `RunnerManager` only loads on desktop: `if (Platform.isDesktopApp) { ... }`
+- Settings UI hides runner toggle on mobile
+- Hash utilities (`hashUtils.ts`) use Node.js crypto (synchronous, fast)
 
 **Manifest configuration:**
 ```json
@@ -2794,42 +2860,47 @@ The `RunnerManager` implementation requires Node.js modules that are not availab
   "name": "EzRAG",
   "version": "1.0.0",
   "minAppVersion": "1.6.0",
-  "isDesktopOnly": true,
   "description": "Index notes into Google Gemini File Search API for semantic search"
 }
 ```
 
-#### Mobile Behavior
-
-If a user tries to install on mobile:
-- Obsidian will show a warning: "This plugin is only available on desktop"
-- The plugin will not load at all
+**Note:** NO `isDesktopOnly: true` flag - plugin supports mobile for non-indexing features.
 
 #### Multi-Platform Vault Considerations
 
 **Scenario:** User has vault synced across Desktop + Mobile
 
 1. **Desktop (Laptop)**: Plugin installed, runner enabled → indexes files
-2. **Mobile (iPhone)**: Plugin not installed → works normally, just can't use EzRAG features
-3. **Desktop (Work PC)**: Plugin installed, runner disabled → read-only, no indexing
+2. **Mobile (iPhone)**: Plugin installed → settings show "Indexing not available on mobile"
+3. **Desktop (Work PC)**: Plugin installed, runner disabled → can enable if needed
 
-**Key point:** The runner.json file is stored in the system's Obsidian config directory, **not** in the vault, so it won't sync via Obsidian Sync/iCloud/Dropbox. Each desktop machine has its own independent runner state.
+**Key benefits:**
+- ✅ API key syncs across all devices via vault data
+- ✅ Mobile users can query/chat (Phase 3) even if they can't index
+- ✅ Runner state (`.json`) stored outside vault, doesn't sync
+- ✅ Each desktop machine has independent runner state
 
-#### Future Mobile Support (Optional)
+#### Mobile UX
 
-To support mobile in the future, would need to:
+On mobile devices, the settings UI shows:
 
-1. **Remove Node.js dependencies:**
-   - Replace `fs` with browser APIs or Obsidian's vault adapter
-   - Replace `crypto` with Web Crypto API (already done for content hashing)
-   - Find alternative to storing runner state outside vault
+```
+╔═══════════════════════════════════════╗
+║ EzRAG Settings                       ║
+╠═══════════════════════════════════════╣
+║ Mobile Platform                       ║
+║ Indexing is not available on mobile  ║
+║ devices. The runner can only be      ║
+║ enabled on desktop. You can still    ║
+║ use chat and query features once     ║
+║ they are implemented.                ║
+╚═══════════════════════════════════════╝
+```
 
-2. **Alternative runner pattern:**
-   - Store runner state in vault (`.obsidian/plugins/ezrag/runner.json`)
-   - Add conflict detection if multiple devices claim runner status
-   - Use device timestamp to auto-resolve conflicts
-
-**Decision:** For MVP, desktop-only is acceptable. Most power users run Obsidian primarily on desktop.
+**Decision:** This hybrid approach gives the best of both worlds:
+- Desktop power users get full indexing control
+- Mobile users can still benefit from query/chat features
+- No confusing "plugin not available" errors on mobile
 
 ---
 
@@ -2845,18 +2916,18 @@ To support mobile in the future, would need to:
 
 - **Janitor Pattern:** Must fetch all documents and build a Map<PathHash, Doc[]> in memory
 - **Sync Conflict Prevention:** When checking if a document exists by pathHash, must list all documents and search in memory
-- **Pagination Overhead:** The API limits page size to 20 documents maximum. For 5,000 documents:
-  - Requires 250 API calls (5,000 / 20 = 250 pages)
-  - Takes ~10-15 seconds to fetch all pages
-  - Each page returns just metadata stubs (not full content), so responses are small
+- **Pagination Overhead:** The API limits page size to 20 documents maximum (default 10). For 5,000 documents:
+  - Requires 250-500 API calls (depending on page size used)
+  - Takes ~10-15 seconds to fetch all pages at max page size (20)
+  - Each page returns just metadata stubs (not full content), so responses are small (~1-2 KB each)
 - **Cost:** Still much cheaper than making 5,000 individual `documents.get()` calls
-- **Tradeoff:** Janitor runs periodically (every 30 mins) + on startup, so this overhead is acceptable
+- **Tradeoff:** Janitor is manual-only (no automatic runs), so this overhead only occurs when user explicitly triggers deduplication
 
 **Why this matters:** The feedback explicitly clarified this limitation. The plan now correctly uses `listDocuments()` with proper pagination and filters in memory, rather than trying to use non-existent metadata filters during listing.
 
-**Optimization Note:** For vaults with 10,000+ documents, consider adding a setting to disable automatic Janitor runs and only run manually. The periodic listing overhead may be noticeable for very large vaults.
+**Performance Note:** For vaults with 10,000+ documents, listing takes ~30-60 seconds. This is acceptable for manual deduplication runs, but would be problematic if run automatically on a timer.
 
-### 8.2 Gemini SDK Integration
+### 8.3 Gemini SDK Integration
 
 **SDK API Stability:** The `@google/genai` SDK is still evolving. The `geminiService.ts` layer is designed as a thin integration layer that may need adjustments as the SDK stabilizes. Key areas to watch:
 
@@ -2866,7 +2937,7 @@ To support mobile in the future, would need to:
 
 **Recommendation:** Keep `geminiService.ts` isolated and expect to refactor API calls as SDK matures.
 
-### 8.2 Chunking Configuration Scope
+### 8.4 Chunking Configuration Scope
 
 The chunking configuration (`maxTokensPerChunk`, `maxOverlapTokens`) is included in Phase 1 but adds complexity early. Consider:
 
@@ -2875,7 +2946,7 @@ The chunking configuration (`maxTokensPerChunk`, `maxOverlapTokens`) is included
 
 The architecture supports both—chunking config is already isolated in `uploadDocument()`.
 
-### 8.3 Settings UI Scope
+### 8.5 Settings UI Scope
 
 The settings tab includes extensive store management features:
 - View current store stats
@@ -2888,15 +2959,16 @@ For a faster v1, consider:
 - Moving store management to an "Advanced" collapsible section
 - Deferring multi-vault store listing to post-MVP
 
-### 8.4 Mobile Compatibility Notes
+### 8.6 Cross-Platform Implementation Notes
 
-**Status bar:** The status bar API is a no-op on mobile. For mobile support, consider:
-- Wrapping status bar updates in `if (!Platform.isMobile)` checks
-- Adding an optional "progress pane" view for mobile users
+**Status bar:** The status bar API is a no-op on mobile. The plugin handles this gracefully by:
+- Status bar item is created on all platforms
+- Updates are no-ops on mobile (Obsidian handles this internally)
+- No need for explicit Platform checks
 
-**Crypto API:** Now uses Web Crypto (`crypto.subtle`) instead of Node's `crypto` module for cross-platform compatibility.
+**Crypto API:** Uses Node.js `crypto` module (synchronous, fast) since all hashing is for indexing operations which are desktop-only (runner-only). No need for Web Crypto API.
 
-### 8.5 Tag Extraction Strategy
+### 8.7 Tag Extraction Strategy
 
 Current implementation extracts tags from **frontmatter only**:
 ```typescript
@@ -2912,7 +2984,7 @@ const allTags = getAllTags(cache) || [];
 
 This is a simple toggle—decide based on your indexing use case.
 
-### 8.6 Error Visibility
+### 8.8 Error Visibility
 
 Files with `status === 'error'` are tracked but not prominently surfaced. Consider adding:
 - An "Errors" section in settings showing files with indexing errors
@@ -2921,7 +2993,7 @@ Files with `status === 'error'` are tracked but not prominently surfaced. Consid
 
 The data model already supports this—just needs UI.
 
-### 8.7 IndexManager Scope
+### 8.9 IndexManager Scope
 
 The `IndexManager` currently handles:
 - Startup reconciliation
@@ -2935,7 +3007,7 @@ If it grows too large, consider extracting maintenance operations to:
 
 Not urgent for v1, but watch for bloat.
 
-### 8.8 MCP Canonical ID
+### 8.10 MCP Canonical ID
 
 For the MCP server (Phase 4), decide on a **canonical document ID** early:
 
@@ -2951,7 +3023,7 @@ For the MCP server (Phase 4), decide on a **canonical document ID** early:
 
 The architecture supports both. Document this choice in `mcp/server.ts` and stick to it for consistency.
 
-### 8.9 Chat View Conversation State
+### 8.11 Chat View Conversation State
 
 When implementing the chat view (Phase 3), decide where conversation state lives:
 - **Option 1:** Plugin state (persisted across restarts)
@@ -3516,12 +3588,13 @@ This plan provides a complete blueprint for building EzRAG with robust multi-dev
 The architecture maintains separation of concerns, making it easy to reuse code between the Obsidian plugin and standalone MCP server. The state management is vault-local and sync-friendly, and the Gemini integration follows best practices for the File Search API.
 
 **Key strengths of this implementation:**
+- ✅ **Cross-platform**: Works on desktop AND mobile (indexing desktop-only, query/chat on all platforms)
 - ✅ **Multi-device safe**: Runner pattern prevents conflicts when vault is synced across machines
 - ✅ **Deduplication**: Manual Janitor with dedicated UI cleans up sync conflicts
 - ✅ **Resilient**: Retry logic with exponential backoff for transient errors
 - ✅ **Follows Obsidian best practices**: Leverages MetadataCache, prevents startup event flooding, proper resource cleanup
-- ✅ **Performance-optimized**: Single read/hash per file, non-blocking startup reconciliation, minimal overhead, proper pagination
-- ✅ **Desktop-optimized**: Leverages Node.js for reliable per-machine state (marked as desktop-only)
+- ✅ **Performance-optimized**: Synchronous hashing (Node crypto), single read/hash per file, non-blocking startup reconciliation
+- ✅ **Desktop-optimized indexing**: Leverages Node.js for reliable per-machine state and fast crypto operations
 - ✅ **Robust state management**: Deep merge for nested settings, external settings change handling, atomic operations
 - ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation, comprehensive UI feedback
 - ✅ **Well-documented**: Comprehensive implementation caveats and best practices sections
