@@ -1,94 +1,187 @@
-# Obsidian Sample Plugin
+# EzRAG - Obsidian Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+**EzRAG** (Easy Retrieval-Augmented Generation) is an Obsidian plugin that indexes your notes using Google Gemini's File Search API, enabling semantic search and AI-powered chat with your vault.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Automatic Indexing**: Keeps your notes synchronized with Gemini's File Search API
+- **Semantic Search**: Query your notes using natural language (coming in Phase 3)
+- **Smart Change Detection**: Only re-indexes notes when content actually changes
+- **Multi-Device Support**: Works across desktop and mobile with designated "runner" machine
+- **Incremental Updates**: Efficient indexing that preserves state across restarts
+- **MCP Server Integration**: External tools can query your vault (coming in Phase 4)
 
-## First time developing plugins?
+## Prerequisites
 
-Quick starting guide for new plugin devs:
+- **Gemini API Key**: Get your free API key from [Google AI Studio](https://ai.google.dev/)
+- **Desktop Required for Indexing**: The runner (indexing machine) must be on desktop (Windows, macOS, or Linux)
+- **Obsidian Desktop/Mobile**: Plugin works on both, but indexing only runs on the designated desktop runner
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## Installation
 
-## Releasing new releases
+### Manual Installation (Development)
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+1. Download or clone this repository
+2. Copy the plugin folder to your vault: `VaultFolder/.obsidian/plugins/ezrag/`
+3. Make sure the folder contains `manifest.json`, `main.js`, and `styles.css`
+4. Restart Obsidian
+5. Enable the plugin in Settings → Community Plugins
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### From Community Plugins (Coming Soon)
 
-## Adding your plugin to the community plugin list
+Once published, you can install directly from Obsidian's Community Plugins browser.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+## Setup
 
-## How to use
+### First-Time Setup
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+1. **Get a Gemini API Key**
+   - Visit [Google AI Studio](https://ai.google.dev/)
+   - Create a new API key
+   - Copy the key
 
-## Manually installing the plugin
+2. **Configure the Plugin**
+   - Open Obsidian Settings → EzRAG
+   - Paste your API key
+   - (Desktop only) Enable "This machine is the runner" toggle
+   - The plugin will automatically create a FileSearchStore for your vault
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+3. **Choose Folders to Index (Optional)**
+   - By default, EzRAG indexes your entire vault
+   - To limit indexing, specify folders in Settings → Included Folders
+   - Example: `Projects, Research, Notes`
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint ./src/`
+### Multi-Device Setup
 
-## Funding URL
+If you use Obsidian on multiple devices (e.g., laptop + desktop):
 
-You can include funding URLs where people who use your plugin can financially support it.
+1. **Install the plugin on all devices**
+2. **Set the API key on one device** (it will sync via your vault)
+3. **Enable "runner" on ONE device only** (preferably your main desktop)
+4. **Other devices** will use the index but won't perform indexing
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+**Why only one runner?** To prevent duplicate indexing, API overload, and sync conflicts.
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
+## Usage
 
-If you have multiple URLs, you can also do:
+### Automatic Indexing
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+Once configured, EzRAG automatically:
+- Indexes new notes when created
+- Re-indexes notes when modified
+- Removes notes from the index when deleted
+- Handles file renames gracefully
 
-## API Documentation
+### Manual Commands
 
-See https://github.com/obsidianmd/obsidian-api
+Access these commands via Command Palette (Cmd/Ctrl+P):
+
+- **Rebuild Index**: Clear and re-index all files
+- **Run Deduplication**: Find and remove duplicate documents (useful after sync conflicts)
+- **Cleanup Orphaned Documents**: Remove indexed files that no longer exist in vault
+
+### Monitoring Progress
+
+- **Status Bar**: Shows indexing progress (bottom-right corner)
+- **Settings Tab**: View index statistics (total, ready, pending, errors)
+
+## Settings
+
+### API Configuration
+
+- **Gemini API Key**: Your Google Gemini API key
+- **Included Folders**: Limit indexing to specific folders (comma-separated)
+
+### Runner Configuration (Desktop Only)
+
+- **This machine is the runner**: Enable to make this device responsible for indexing
+- Only ONE device per vault should be the runner
+
+### Performance Tuning
+
+- **Upload Concurrency**: Number of concurrent uploads (1-5, default: 2)
+- **Max Tokens Per Chunk**: Maximum tokens in each chunk (100-1000, default: 400)
+- **Max Overlap Tokens**: Overlapping tokens between chunks (0-200, default: 50)
+
+### Store Management
+
+- **View Stats**: See FileSearchStore statistics
+- **List All Stores**: View all stores for your API key
+- **Delete Store**: Permanently remove the store (cannot be undone!)
+
+## FAQ
+
+### Which files are indexed?
+
+Only Markdown files (`.md`) in included folders are indexed. Attachments, templates, and non-markdown files are ignored.
+
+### How much does it cost?
+
+Google Gemini's File Search API pricing depends on your usage. Check [Google AI Pricing](https://ai.google.dev/pricing) for current rates.
+
+### What happens if I rename a file?
+
+EzRAG automatically deletes the old indexed version and creates a new one with the updated path.
+
+### Can I use this on mobile?
+
+Yes, but mobile devices cannot be the "runner" (indexing machine). Mobile devices can use chat and search features once implemented.
+
+### How do I fix duplicate documents?
+
+Run the **Run Deduplication** command from Settings or the Command Palette. This finds and removes duplicates created by sync conflicts.
+
+### What is a FileSearchStore?
+
+A FileSearchStore is Gemini's container for indexed documents. EzRAG creates one store per vault, named after your vault.
+
+## Troubleshooting
+
+### Indexing not working
+
+1. Check that "This machine is the runner" is enabled (Settings → Runner Configuration)
+2. Verify your API key is valid (Settings → API Configuration)
+3. Check the console (Cmd/Ctrl+Shift+I) for error messages
+
+### Files not showing in index
+
+1. Ensure files are in included folders (or no folders are specified for "all")
+2. Check that files are Markdown (`.md` extension)
+3. Run "Rebuild Index" command to force re-indexing
+
+### Sync conflicts creating duplicates
+
+1. Run "Run Deduplication" from Settings
+2. Ensure only ONE device is the runner
+3. Wait for sync to complete before switching devices
+
+## Roadmap
+
+- **Phase 1** (Current): Core infrastructure and automatic indexing
+- **Phase 2**: Enhanced progress tracking and reconciliation
+- **Phase 3**: Chat interface for querying notes
+- **Phase 4**: MCP server for external tool integration
+
+## Privacy & Data
+
+- Your notes are uploaded to Google's Gemini API for indexing
+- Indexed content is stored in your Google account's FileSearchStore
+- EzRAG does not collect or transmit any usage data
+- You can delete your FileSearchStore at any time from Settings
+
+## Support
+
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/yourusername/ezrag/issues)
+- **Feature Requests**: Submit on GitHub Discussions
+- **Documentation**: See [PLAN.md](./PLAN.md) for technical details
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Credits
+
+Built with:
+- [Obsidian Plugin API](https://github.com/obsidianmd/obsidian-api)
+- [Google Generative AI SDK](https://www.npmjs.com/package/@google/genai)
+- [p-queue](https://www.npmjs.com/package/p-queue) for job queue management
