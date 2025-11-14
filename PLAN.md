@@ -10,6 +10,11 @@
 6. [Detailed Component Design](#6-detailed-component-design)
 7. [Code Examples](#7-code-examples)
 8. [Testing Strategy](#8-testing-strategy)
+9. [Key Implementation Notes](#9-key-implementation-notes)
+10. [Key Implementation Clarifications](#10-key-implementation-clarifications)
+11. [Obsidian API Best Practices & Implementation Notes](#11-obsidian-api-best-practices--implementation-notes)
+12. [Future Enhancements](#12-future-enhancements-post-mvp)
+13. [Conclusion](#13-conclusion)
 
 ---
 
@@ -29,6 +34,7 @@ Build an Obsidian plugin that:
 - **Delete-then-recreate semantics**: Work with Gemini's API constraints
 - **Metadata-driven mapping**: Store identity in customMetadata, not displayName
 - **Separation of concerns**: Keep Gemini/state logic independent of Obsidian APIs
+- **Use Obsidian APIs correctly**: Leverage MetadataCache for frontmatter, prevent startup event flooding
 
 ---
 
@@ -570,10 +576,11 @@ Orchestrates all indexing operations.
 import PQueue from 'p-queue';
 import { StateManager, IndexedDocState, computeContentHash, computePathHash } from '../state/state';
 import { GeminiService } from '../gemini/geminiService';
-import { TFile, Vault } from 'obsidian';
+import { App, TFile, Vault } from 'obsidian';
 
 export interface IndexManagerOptions {
   vault: Vault;
+  app: App; // For MetadataCache access
   stateManager: StateManager;
   geminiService: GeminiService;
   vaultName: string;
@@ -582,6 +589,7 @@ export interface IndexManagerOptions {
 
 export class IndexManager {
   private vault: Vault;
+  private app: App;
   private state: StateManager;
   private gemini: GeminiService;
   private vaultName: string;
@@ -597,6 +605,7 @@ export class IndexManager {
 
   constructor(options: IndexManagerOptions) {
     this.vault = options.vault;
+    this.app = options.app;
     this.state = options.stateManager;
     this.gemini = options.geminiService;
     this.vaultName = options.vaultName;
@@ -773,8 +782,8 @@ export class IndexManager {
     const pathHash = computePathHash(file.path);
     const settings = this.state.getSettings();
 
-    // Extract tags from frontmatter
-    const tags = this.extractTags(content);
+    // Extract tags from frontmatter using MetadataCache
+    const tags = this.extractTags(file);
 
     // Build metadata
     const metadata = [
@@ -873,25 +882,20 @@ export class IndexManager {
   }
 
   /**
-   * Private: Extract tags from frontmatter
+   * Private: Extract tags from frontmatter using MetadataCache
    */
-  private extractTags(content: string): string[] {
-    const tags: string[] = [];
+  private extractTags(file: TFile): string[] {
+    // Use MetadataCache - already parsed, cached, and handles YAML edge cases
+    const cache = this.app.metadataCache.getFileCache(file);
+    if (!cache?.frontmatter?.tags) return [];
 
-    // Simple frontmatter regex (improve as needed)
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) return tags;
+    const tags = cache.frontmatter.tags;
 
-    const frontmatter = fmMatch[1];
+    // Tags can be: string | string[] | undefined
+    if (typeof tags === 'string') return [tags];
+    if (Array.isArray(tags)) return tags;
 
-    // Extract tags field
-    const tagsMatch = frontmatter.match(/tags:\s*\[([^\]]+)\]/);
-    if (tagsMatch) {
-      const tagList = tagsMatch[1].split(',').map(t => t.trim().replace(/['"]/g, ''));
-      tags.push(...tagList);
-    }
-
-    return tags;
+    return [];
   }
 
   /**
@@ -1103,8 +1107,19 @@ export default class EzRAGPlugin extends Plugin {
   async onload() {
     console.log('Loading EzRAG plugin');
 
-    // Load persisted data
+    // Load persisted data with proper deep merge for nested objects
     const savedData = await this.loadData();
+    if (savedData) {
+      // Deep merge nested chunkingConfig
+      savedData.settings = {
+        ...DEFAULT_DATA.settings,
+        ...savedData.settings,
+        chunkingConfig: {
+          ...DEFAULT_DATA.settings.chunkingConfig,
+          ...(savedData.settings?.chunkingConfig || {})
+        }
+      };
+    }
     this.stateManager = new StateManager(savedData || DEFAULT_DATA);
 
     // Initialize Gemini service if API key is set
@@ -1120,38 +1135,45 @@ export default class EzRAGPlugin extends Plugin {
     this.statusBarItem = this.addStatusBarItem();
     this.updateStatusBar('Idle');
 
-    // Register event handlers
-    this.registerEvent(
-      this.app.vault.on('create', (file) => {
-        if (file instanceof TFile) {
-          this.indexManager?.onFileCreated(file);
-        }
-      })
-    );
+    // Register vault events after layout is ready to avoid processing existing files on startup
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(
+        this.app.vault.on('create', (file) => {
+          if (file instanceof TFile) {
+            this.indexManager?.onFileCreated(file);
+          }
+        })
+      );
 
-    this.registerEvent(
-      this.app.vault.on('modify', (file) => {
-        if (file instanceof TFile) {
-          this.indexManager?.onFileModified(file);
-        }
-      })
-    );
+      this.registerEvent(
+        this.app.vault.on('modify', (file) => {
+          if (file instanceof TFile) {
+            this.indexManager?.onFileModified(file);
+          }
+        })
+      );
 
-    this.registerEvent(
-      this.app.vault.on('rename', (file, oldPath) => {
-        if (file instanceof TFile) {
-          this.indexManager?.onFileRenamed(file, oldPath);
-        }
-      })
-    );
+      this.registerEvent(
+        this.app.vault.on('rename', (file, oldPath) => {
+          if (file instanceof TFile) {
+            this.indexManager?.onFileRenamed(file, oldPath);
+          }
+        })
+      );
 
-    this.registerEvent(
-      this.app.vault.on('delete', (file) => {
-        if (file instanceof TFile) {
-          this.indexManager?.onFileDeleted(file.path);
-        }
-      })
-    );
+      this.registerEvent(
+        this.app.vault.on('delete', (file) => {
+          if (file instanceof TFile) {
+            this.indexManager?.onFileDeleted(file.path);
+          }
+        })
+      );
+
+      // Run startup reconciliation after layout is ready
+      if (this.indexManager) {
+        this.indexManager.reconcileOnStartup();
+      }
+    });
 
     // Add commands
     this.addCommand({
@@ -1165,10 +1187,28 @@ export default class EzRAGPlugin extends Plugin {
       name: 'Cleanup Orphaned Documents',
       callback: () => this.cleanupOrphans(),
     });
+  }
 
-    // Run startup reconciliation
-    if (this.indexManager) {
-      await this.indexManager.reconcileOnStartup();
+  async onExternalSettingsChange() {
+    // Handle external settings changes (e.g., from sync services)
+    const savedData = await this.loadData();
+    if (savedData) {
+      // Deep merge nested chunkingConfig
+      savedData.settings = {
+        ...DEFAULT_DATA.settings,
+        ...savedData.settings,
+        chunkingConfig: {
+          ...DEFAULT_DATA.settings.chunkingConfig,
+          ...(savedData.settings?.chunkingConfig || {})
+        }
+      };
+      this.stateManager = new StateManager(savedData);
+
+      // Re-initialize services if API key changed
+      const settings = this.stateManager.getSettings();
+      if (settings.apiKey && this.geminiService) {
+        await this.initializeServices();
+      }
     }
   }
 
@@ -1204,6 +1244,7 @@ export default class EzRAGPlugin extends Plugin {
     // Initialize index manager
     this.indexManager = new IndexManager({
       vault: this.app.vault,
+      app: this.app, // Pass app for MetadataCache access
       stateManager: this.stateManager,
       geminiService: this.geminiService,
       vaultName,
@@ -1394,46 +1435,63 @@ Updated: ${new Date(store.updateTime).toLocaleString()}
 ### Example: Frontmatter Tag Extraction
 
 ```typescript
-// src/utils/frontmatter.ts
-export function extractFrontmatter(content: string): Record<string, any> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
+// src/utils/metadata.ts
+import { App, TFile } from 'obsidian';
 
-  const yaml = match[1];
-  const result: Record<string, any> = {};
+/**
+ * Extract tags from file frontmatter using MetadataCache
+ *
+ * Benefits:
+ * - Already cached (no file read needed)
+ * - Handles YAML edge cases properly
+ * - Automatically updated by Obsidian
+ * - Can extract both frontmatter tags and inline #tags
+ */
+export function extractTags(app: App, file: TFile): string[] {
+  const cache = app.metadataCache.getFileCache(file);
+  if (!cache?.frontmatter?.tags) return [];
 
-  // Simple YAML parsing (use a library like js-yaml for production)
-  const lines = yaml.split('\n');
-  for (const line of lines) {
-    const [key, ...valueParts] = line.split(':');
-    if (!key) continue;
+  const tags = cache.frontmatter.tags;
 
-    let value = valueParts.join(':').trim();
-
-    // Handle arrays
-    if (value.startsWith('[') && value.endsWith(']')) {
-      value = value.slice(1, -1).split(',').map(v => v.trim().replace(/['"]/g, ''));
-    }
-
-    result[key.trim()] = value;
-  }
-
-  return result;
-}
-
-export function extractTags(content: string): string[] {
-  const fm = extractFrontmatter(content);
-  const tags = fm.tags || fm.tag || [];
-
-  if (typeof tags === 'string') {
-    return [tags];
-  }
-
-  if (Array.isArray(tags)) {
-    return tags;
-  }
+  // Tags can be: string | string[] | undefined
+  if (typeof tags === 'string') return [tags];
+  if (Array.isArray(tags)) return tags;
 
   return [];
+}
+
+/**
+ * Extract ALL tags including inline #tags from document body
+ * Uses Obsidian's built-in getAllTags utility
+ */
+export function extractAllTags(app: App, file: TFile): string[] {
+  const cache = app.metadataCache.getFileCache(file);
+  if (!cache) return [];
+
+  // getAllTags combines frontmatter tags + inline #tags
+  const allTags = getAllTags(cache) || [];
+
+  // Remove # prefix if present
+  return allTags.map(tag => tag.startsWith('#') ? tag.slice(1) : tag);
+}
+
+/**
+ * Extract any frontmatter field
+ */
+export function getFrontmatterField(app: App, file: TFile, field: string): any {
+  const cache = app.metadataCache.getFileCache(file);
+  return cache?.frontmatter?.[field];
+}
+
+/**
+ * Modify frontmatter (atomic operation)
+ */
+export async function updateFrontmatter(
+  app: App,
+  file: TFile,
+  updater: (frontmatter: any) => void
+): Promise<void> {
+  await app.fileManager.processFrontMatter(file, updater);
 }
 ```
 
@@ -1673,7 +1731,276 @@ Permanently deletes the current vault's FileSearchStore:
 
 ---
 
-## 11. Future Enhancements (Post-MVP)
+## 11. Obsidian API Best Practices & Implementation Notes
+
+This section documents critical Obsidian API best practices based on official documentation review.
+
+### 11.1 Vault Event Handling
+
+**Critical:** Vault `create` events fire for EVERY existing file during plugin startup. To prevent performance issues, register vault event handlers AFTER workspace layout is ready:
+
+```typescript
+// ❌ BAD: Fires for all existing files on startup
+async onload() {
+  this.registerEvent(
+    this.app.vault.on('create', (file) => {
+      this.processFile(file); // This runs for EVERY file!
+    })
+  );
+}
+
+// ✅ GOOD: Only fires for newly created files
+async onload() {
+  this.app.workspace.onLayoutReady(() => {
+    this.registerEvent(
+      this.app.vault.on('create', (file) => {
+        this.processFile(file); // Only runs for actual new files
+      })
+    );
+  });
+}
+```
+
+**Alternative:** Check `layoutReady` flag in each handler:
+```typescript
+this.registerEvent(
+  this.app.vault.on('create', (file) => {
+    if (!this.app.workspace.layoutReady) return;
+    this.processFile(file);
+  })
+);
+```
+
+**Impact:** Prevents processing thousands of files on startup, dramatically improving load time.
+
+### 11.2 MetadataCache for Frontmatter
+
+**Best Practice:** Always use `MetadataCache` for reading frontmatter instead of manual YAML parsing:
+
+```typescript
+// ❌ BAD: Manual regex-based YAML parsing
+private extractTags(content: string): string[] {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const yaml = match[1];
+  // ... complex regex parsing ...
+}
+
+// ✅ GOOD: Use MetadataCache
+private extractTags(file: TFile): string[] {
+  const cache = this.app.metadataCache.getFileCache(file);
+  if (!cache?.frontmatter?.tags) return [];
+
+  const tags = cache.frontmatter.tags;
+  if (typeof tags === 'string') return [tags];
+  if (Array.isArray(tags)) return tags;
+  return [];
+}
+```
+
+**Benefits:**
+- Already cached (no disk read or parsing needed)
+- Handles YAML spec edge cases correctly
+- Automatically updated by Obsidian
+- Includes position information
+- Can extract inline `#tags` from body
+
+**For writing frontmatter:**
+```typescript
+// ✅ Use FileManager.processFrontMatter for atomic updates
+await app.fileManager.processFrontMatter(file, (frontmatter) => {
+  frontmatter.tags = ['updated', 'tags'];
+  delete frontmatter.oldField;
+});
+```
+
+### 11.3 Nested Settings Merge
+
+**Important:** `Object.assign()` performs shallow copy. For nested settings objects, manually deep merge to preserve defaults:
+
+```typescript
+// ❌ BAD: Loses nested defaults
+async loadSettings() {
+  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  // If saved data only has chunkingConfig.maxTokensPerChunk,
+  // chunkingConfig.maxOverlapTokens will be LOST!
+}
+
+// ✅ GOOD: Deep merge nested objects
+async loadSettings() {
+  const loaded = await this.loadData();
+  this.settings = {
+    ...DEFAULT_SETTINGS,
+    ...loaded,
+    chunkingConfig: {
+      ...DEFAULT_SETTINGS.chunkingConfig,
+      ...(loaded?.chunkingConfig || {})
+    }
+  };
+}
+```
+
+**Impact:** Ensures default values are preserved when new settings fields are added.
+
+### 11.4 File Path Operations
+
+**Performance Critical:**
+
+```typescript
+// ❌ BAD: O(n) linear search through all files
+const file = this.app.vault.getFiles().find(f => f.path === targetPath);
+
+// ✅ GOOD: O(1) direct lookup
+const file = this.app.vault.getFileByPath(targetPath);
+```
+
+**Path Normalization:**
+```typescript
+import { normalizePath } from 'obsidian';
+
+// Always normalize user-provided paths
+const cleanPath = normalizePath(userInput);
+const file = this.app.vault.getFileByPath(cleanPath);
+```
+
+### 11.5 File Reading Strategies
+
+**Choose the right method:**
+
+```typescript
+// For displaying content (can use cache)
+const content = await this.app.vault.cachedRead(file);
+
+// For modifying content (always fresh from disk)
+const content = await this.app.vault.read(file);
+
+// For atomic read-modify-write (PREFERRED)
+await this.app.vault.process(file, (data) => {
+  return data.replace('old', 'new');
+});
+```
+
+**Why `process()` is better:**
+- Atomic operation (no race conditions)
+- Prevents data loss from concurrent modifications
+- Handles read-modify-write as single transaction
+
+### 11.6 External Settings Changes
+
+**Best Practice:** Settings can be modified externally (sync services, manual edits). Implement `onExternalSettingsChange()` to handle this:
+
+```typescript
+async onExternalSettingsChange() {
+  await this.loadSettings();
+  // Re-initialize services that depend on settings
+  if (this.settings.apiKey) {
+    await this.initializeServices();
+  }
+}
+```
+
+### 11.7 Mobile Compatibility
+
+**Limitations:**
+- Status bar NOT supported on mobile
+- No Node.js APIs (use browser APIs only)
+- No regex lookbehind (Safari limitation)
+
+**Solution:**
+```typescript
+// Check platform
+if (Platform.isMobile) {
+  // Skip status bar updates
+} else {
+  this.statusBarItem.setText('Status');
+}
+```
+
+### 11.8 Security Best Practices
+
+**DOM Safety:**
+```typescript
+// ❌ BAD: XSS vulnerability
+element.innerHTML = userContent;
+
+// ✅ GOOD: Use Obsidian's DOM helpers
+element.createEl('div', { text: userContent });
+element.createSpan({ text: userContent });
+```
+
+**Never use global app:**
+```typescript
+// ❌ BAD: Using global
+window.app.vault.read(file);
+
+// ✅ GOOD: Use plugin instance
+this.app.vault.read(file);
+```
+
+### 11.9 Resource Cleanup
+
+**Always use `register*` methods for automatic cleanup:**
+
+```typescript
+export default class MyPlugin extends Plugin {
+  async onload() {
+    // Auto-cleanup on unload
+    this.registerEvent(this.app.vault.on('modify', handler));
+    this.registerInterval(setInterval(work, 1000));
+    this.registerDomEvent(element, 'click', handler);
+
+    // Custom cleanup
+    this.register(() => {
+      // Custom cleanup code
+    });
+  }
+
+  // No need to manually cleanup - handled automatically
+  async onunload() {}
+}
+```
+
+### 11.10 View Management
+
+**Don't store view references:**
+```typescript
+// ❌ BAD: Storing view reference
+this.myView = workspace.getActiveViewOfType(MyView);
+
+// ✅ GOOD: Always query when needed
+const view = workspace.getActiveViewOfType(MyView);
+if (view) {
+  view.doSomething();
+}
+```
+
+**Reason:** Users can close/move leaves at any time, making stored references stale.
+
+### 11.11 Performance Optimization
+
+**Keep `onload()` lightweight:**
+```typescript
+async onload() {
+  // Quick synchronous setup
+  this.addSettingTab(new MySettingTab(this.app, this));
+  this.addCommand({ ... });
+
+  // Defer heavy operations
+  this.app.workspace.onLayoutReady(() => {
+    this.runExpensiveSetup();
+  });
+}
+```
+
+**Startup checklist:**
+- ✅ Settings loading: Fast
+- ✅ Event registration: Deferred to `onLayoutReady()`
+- ✅ File scanning: Only in startup reconciliation
+- ✅ API calls: Only if necessary
+- ✅ Build: Use production mode (minified)
+
+---
+
+## 12. Future Enhancements (Post-MVP)
 
 - **Selective indexing**: Right-click menu to exclude specific files
 - **Per-folder chunking strategies**: Different chunking configs based on folder or file size
@@ -1689,7 +2016,7 @@ Permanently deletes the current vault's FileSearchStore:
 
 ---
 
-## Conclusion
+## 13. Conclusion
 
 This plan provides a complete blueprint for building EzRAG. The phased approach allows incremental delivery of value:
 - **Phase 1**: Basic infrastructure and settings
@@ -1698,3 +2025,12 @@ This plan provides a complete blueprint for building EzRAG. The phased approach 
 - **Phase 4**: MCP server for external tools
 
 The architecture maintains separation of concerns, making it easy to reuse code between the Obsidian plugin and standalone MCP server. The state management is vault-local and sync-friendly, and the Gemini integration follows best practices for the File Search API.
+
+**Key strengths of this implementation:**
+- ✅ **Follows Obsidian best practices**: Leverages MetadataCache, prevents startup event flooding, proper resource cleanup
+- ✅ **Performance-optimized**: Hash-based change detection, deferred event registration, minimal startup overhead
+- ✅ **Robust state management**: Deep merge for nested settings, external settings change handling, atomic operations
+- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation
+- ✅ **Well-documented**: Comprehensive best practices section for future maintainers
+
+This plan is based on official Obsidian developer documentation to ensure correctness, performance, and maintainability.
