@@ -72,12 +72,18 @@ export class StateManager {
     this.data.index.queue = this.data.index.queue.filter((entry) => entry.id !== entryId);
   }
 
-  removeQueueEntriesByPath(vaultPath: string): void {
+  removeQueueEntriesByPath(vaultPath: string): number {
+    const before = this.data.index.queue.length;
     this.data.index.queue = this.data.index.queue.filter((entry) => entry.vaultPath !== vaultPath);
+    return before - this.data.index.queue.length;
   }
 
   findQueueEntryByPath(vaultPath: string): IndexQueueEntry | undefined {
     return this.data.index.queue.find((entry) => entry.vaultPath === vaultPath);
+  }
+
+  findQueueEntryById(id: string): IndexQueueEntry | undefined {
+    return this.data.index.queue.find((entry) => entry.id === id);
   }
 
   updateQueueEntry(entryId: string, updates: Partial<IndexQueueEntry>): void {

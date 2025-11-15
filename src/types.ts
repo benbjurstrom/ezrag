@@ -13,6 +13,7 @@ export interface PluginSettings {
   includeFolders: string[]; // Empty = whole vault
   maxConcurrentUploads: number; // Default: 2
   chunkingConfig: ChunkingConfig; // Global chunking strategy
+  uploadThrottleMs: number; // Delay before uploading modified documents
 }
 
 export interface ChunkingConfig {
@@ -53,6 +54,7 @@ export interface IndexQueueEntry {
   enqueuedAt: number;
   attempts: number;
   lastAttemptAt?: number;
+  readyAt?: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     maxTokensPerChunk: 400,
     maxOverlapTokens: 50,
   },
+  uploadThrottleMs: 120000,
 };
 
 export const DEFAULT_DATA: PersistedData = {

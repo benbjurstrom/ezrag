@@ -39,6 +39,7 @@ export class IndexManager {
   private onStateChange?: () => void;
   private connectionManager: ConnectionManager;
   private processingEntries = new Set<string>();
+  private nextReadyTimer: number | null = null;
 
   private stats: IndexingStats = {
     total: 0,
@@ -127,6 +128,10 @@ export class IndexManager {
     for (const file of files) {
       try {
         const content = await this.vault.read(file);
+        if (content.trim().length === 0) {
+          this.handleEmptyFile(file.path);
+          continue;
+        }
         const contentHash = computeContentHash(content);
         const pathHash = computePathHash(file.path);
 
@@ -188,6 +193,10 @@ export class IndexManager {
     // Read and hash once
     try {
       const content = await this.vault.read(file);
+      if (content.trim().length === 0) {
+        this.handleEmptyFile(file.path);
+        return;
+      }
       const contentHash = computeContentHash(content);
       this.queueIndexJob(file, contentHash);
     } catch (err) {
@@ -205,6 +214,10 @@ export class IndexManager {
 
     try {
       const content = await this.vault.read(file);
+      if (content.trim().length === 0) {
+        this.handleEmptyFile(file.path);
+        return;
+      }
       const contentHash = computeContentHash(content);
 
       const state = this.state.getDocState(file.path);
@@ -227,7 +240,11 @@ export class IndexManager {
     }
 
     // Drop any pending work for the old path
-    this.state.removeQueueEntriesByPath(oldPath);
+    const removedEntries = this.state.removeQueueEntriesByPath(oldPath);
+    if (removedEntries > 0) {
+      this.stats.pending = Math.max(0, this.stats.pending - removedEntries);
+      this.tryProcessQueue();
+    }
     this.notifyStateChange();
 
     const oldState = this.state.getDocState(oldPath);
@@ -243,6 +260,10 @@ export class IndexManager {
     if (this.isInIncludedFolders(file)) {
       try {
         const content = await this.vault.read(file);
+        if (content.trim().length === 0) {
+          this.handleEmptyFile(file.path);
+          return;
+        }
         const contentHash = computeContentHash(content);
         this.queueIndexJob(file, contentHash);
       } catch (err) {
@@ -256,7 +277,11 @@ export class IndexManager {
    */
   async onFileDeleted(path: string): Promise<void> {
     // Remove any pending work for this path
-    this.state.removeQueueEntriesByPath(path);
+    const removedEntries = this.state.removeQueueEntriesByPath(path);
+    if (removedEntries > 0) {
+      this.stats.pending = Math.max(0, this.stats.pending - removedEntries);
+      this.tryProcessQueue();
+    }
 
     const state = this.state.getDocState(path);
     if (!state) {
@@ -337,14 +362,16 @@ export class IndexManager {
    */
   private queueIndexJob(file: TFile, contentHash: string): void {
     const existingEntry = this.state.findQueueEntryByPath(file.path);
+    const throttleMs = this.state.getSettings().uploadThrottleMs ?? 0;
+    const readyAt = throttleMs > 0 ? Date.now() + throttleMs : Date.now();
     const entry: IndexQueueEntry = {
       id: existingEntry?.id ?? this.generateQueueEntryId(),
       vaultPath: file.path,
       operation: 'upload',
       contentHash,
-      enqueuedAt: existingEntry?.enqueuedAt ?? Date.now(),
-      attempts: existingEntry?.attempts ?? 0,
-      lastAttemptAt: existingEntry?.lastAttemptAt,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      readyAt,
     };
 
     this.state.addOrUpdateQueueEntry(entry);
@@ -366,9 +393,9 @@ export class IndexManager {
       vaultPath,
       operation: 'delete',
       remoteId,
-      enqueuedAt: existingEntry?.enqueuedAt ?? Date.now(),
-      attempts: existingEntry?.attempts ?? 0,
-      lastAttemptAt: existingEntry?.lastAttemptAt,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      readyAt: Date.now(),
     };
 
     this.state.addOrUpdateQueueEntry(entry);
@@ -383,12 +410,38 @@ export class IndexManager {
   }
 
   private tryProcessQueue(): void {
-    if (!this.connectionManager.isConnected() || this.queue.isPaused) {
+    if (this.queue.isPaused) {
       return;
     }
 
     const entries = this.state.getQueueEntries();
+    if (entries.length === 0) {
+      this.scheduleNextReadyTimer(null);
+      return;
+    }
+
+    const now = Date.now();
+    let nextReadyAt: number | null = null;
+    const readyEntries: IndexQueueEntry[] = [];
+
     for (const entry of entries) {
+      const entryReadyAt = entry.readyAt ?? entry.enqueuedAt ?? now;
+      if (entryReadyAt > now) {
+        if (nextReadyAt === null || entryReadyAt < nextReadyAt) {
+          nextReadyAt = entryReadyAt;
+        }
+        continue;
+      }
+      readyEntries.push(entry);
+    }
+
+    this.scheduleNextReadyTimer(nextReadyAt);
+
+    if (!this.connectionManager.isConnected()) {
+      return;
+    }
+
+    for (const entry of readyEntries) {
       if (this.processingEntries.has(entry.id)) {
         continue;
       }
@@ -408,16 +461,37 @@ export class IndexManager {
     }
   }
 
+  private scheduleNextReadyTimer(nextReadyAt: number | null): void {
+    if (this.nextReadyTimer !== null) {
+      window.clearTimeout(this.nextReadyTimer);
+      this.nextReadyTimer = null;
+    }
+
+    if (!nextReadyAt) {
+      return;
+    }
+
+    const delay = Math.max(0, nextReadyAt - Date.now());
+    this.nextReadyTimer = window.setTimeout(() => {
+      this.nextReadyTimer = null;
+      this.tryProcessQueue();
+    }, delay);
+  }
+
   private async processQueueEntry(entry: IndexQueueEntry): Promise<void> {
     const maxRetries = 3;
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (!this.connectionManager.isConnected()) {
+        const nextAttempts = (entry.attempts ?? 0) + attempt;
+        const now = Date.now();
         this.state.updateQueueEntry(entry.id, {
-          lastAttemptAt: Date.now(),
-          attempts: entry.attempts + attempt,
+          lastAttemptAt: now,
+          attempts: nextAttempts,
         });
+        entry.lastAttemptAt = now;
+        entry.attempts = nextAttempts;
         this.notifyStateChange();
         this.updateProgress('Waiting for connection');
         return;
@@ -430,14 +504,25 @@ export class IndexManager {
           await this.processDeleteEntry(entry);
         }
 
-        this.state.removeQueueEntry(entry.id);
+        const removed = this.removeQueueEntryIfCurrent(entry);
         this.stats.completed++;
-        this.stats.pending = Math.max(0, this.stats.pending - 1);
+        if (removed) {
+          this.stats.pending = Math.max(0, this.stats.pending - 1);
+        }
         this.updateProgress('Indexing');
         this.notifyStateChange();
         return;
       } catch (err) {
         lastError = err as Error;
+
+        const now = Date.now();
+        const attemptCount = (entry.attempts ?? 0) + 1;
+        this.state.updateQueueEntry(entry.id, {
+          lastAttemptAt: now,
+          attempts: attemptCount,
+        });
+        entry.lastAttemptAt = now;
+        entry.attempts = attemptCount;
 
         if (this.isAuthError(err)) {
           this.connectionManager.setApiKeyValid(false, 'Gemini rejected the API key. Please verify it in settings.');
@@ -456,23 +541,29 @@ export class IndexManager {
     }
 
     if (!this.connectionManager.isConnected()) {
+      const now = Date.now();
+      const nextAttempts = (entry.attempts ?? 0) + 1;
       this.state.updateQueueEntry(entry.id, {
-        lastAttemptAt: Date.now(),
-        attempts: entry.attempts + 1,
+        lastAttemptAt: now,
+        attempts: nextAttempts,
       });
+      entry.lastAttemptAt = now;
+      entry.attempts = nextAttempts;
       this.notifyStateChange();
       this.updateProgress('Waiting for connection');
       return;
     }
 
     this.stats.failed++;
-    this.stats.pending = Math.max(0, this.stats.pending - 1);
+    const removed = this.removeQueueEntryIfCurrent(entry);
+    if (removed) {
+      this.stats.pending = Math.max(0, this.stats.pending - 1);
+    }
 
-    if (entry.operation === 'upload') {
+    if (entry.operation === 'upload' && removed) {
       this.markDocError(entry.vaultPath, lastError);
     }
 
-    this.state.removeQueueEntry(entry.id);
     this.updateProgress('Indexing');
     this.notifyStateChange();
   }
@@ -514,6 +605,32 @@ export class IndexManager {
     state.errorMessage = err?.message || 'Unknown error';
     this.state.setDocState(vaultPath, state);
     this.notifyStateChange();
+  }
+
+  private handleEmptyFile(vaultPath: string): void {
+    console.log(`[IndexManager] Skipping empty file: ${vaultPath}`);
+    const removedEntries = this.state.removeQueueEntriesByPath(vaultPath);
+    if (removedEntries > 0) {
+      this.stats.pending = Math.max(0, this.stats.pending - removedEntries);
+    }
+
+    const existingState = this.state.getDocState(vaultPath);
+    if (existingState?.geminiDocumentName) {
+      this.queueDeleteJob(vaultPath, existingState.geminiDocumentName);
+    }
+
+    this.state.removeDocState(vaultPath);
+    this.notifyStateChange();
+    this.tryProcessQueue();
+  }
+
+  private removeQueueEntryIfCurrent(entry: IndexQueueEntry): boolean {
+    const current = this.state.findQueueEntryByPath(entry.vaultPath);
+    if (current && current.enqueuedAt !== entry.enqueuedAt) {
+      return false;
+    }
+    this.state.removeQueueEntry(entry.id);
+    return true;
   }
 
   /**
@@ -602,7 +719,7 @@ export class IndexManager {
     // NOTE: We do NOT check remote for existing documents here.
     // That would require listing all documents (expensive!).
     // Instead, rely on manual Janitor cleanup to remove any edge case duplicates or stale documents.
-    // Per PLAN.md: Hot path uses local state only, Janitor is manual cleanup.
+    // Per ARCHITECTURE.md: Hot path uses local state only, Janitor is manual cleanup.
 
     // Delete old document if exists
     if (geminiDocumentName) {
@@ -780,11 +897,19 @@ export class IndexManager {
     this.stats.pending = 0;
     this.updateProgress('Idle');
     this.notifyStateChange();
+    if (this.nextReadyTimer !== null) {
+      window.clearTimeout(this.nextReadyTimer);
+      this.nextReadyTimer = null;
+    }
   }
 
   dispose(): void {
     this.queue.clear();
     this.processingEntries.clear();
+    if (this.nextReadyTimer !== null) {
+      window.clearTimeout(this.nextReadyTimer);
+      this.nextReadyTimer = null;
+    }
     this.stats = {
       total: 0,
       completed: 0,

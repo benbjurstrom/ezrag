@@ -1,4 +1,4 @@
-# Implementation Plan: EzRAG Obsidian Plugin
+# Architecture Overview: EzRAG Obsidian Plugin
 
 ## Table of Contents
 
@@ -6,7 +6,7 @@
 2. [Architecture](#2-architecture)
 3. [Module Structure](#3-module-structure)
 4. [Data Models](#4-data-models)
-5. [Implementation Phases](#5-implementation-phases)
+5. [Upcoming Work: MCP Server](#5-upcoming-work-mcp-server)
 6. [Detailed Component Design](#6-detailed-component-design)
 7. [Code Examples](#7-code-examples)
 8. [Implementation Caveats & Notes](#8-implementation-caveats--notes)
@@ -48,7 +48,7 @@ Build an Obsidian plugin that:
 │                     Obsidian Plugin                         │
 │  ┌────────────┐  ┌──────────────┐  ┌────────────────────┐  │
 │  │   Main     │  │   Settings   │  │  Chat Interface    │  │
-│  │ (`main.ts`)  │  │      UI      │  │   (future Phase 3) │  │
+│  │ (`main.ts`)  │  │      UI      │  │                    │  │
 │  └─────┬──────┘  └──────┬───────┘  └──────────┬─────────┘  │
 │        │                │                     │             │
 │  ┌─────▼────────────────▼─────────────────────▼─────────┐  │
@@ -96,7 +96,7 @@ Build an Obsidian plugin that:
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│              MCP Server (future Phase 4)                    │
+│              MCP Server (external tools)                    │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  • Reads .obsidian/plugins/ezrag/data.json             │ │
 │  │  • Exposes keywordSearch tool                          │ │
@@ -201,13 +201,15 @@ src/
 │   ├── hashUtils.ts        # Content hashing utilities
 ├── store/
 │   └── storeManager.ts     # Store management helpers (stats, list, delete)
+├── connection/
+│   └── connectionManager.ts # Browser online/offline + API key validity tracking
 ├── ui/
 │   ├── settingsTab.ts      # Settings UI
-│   ├── indexingStatusModal.ts  # Indexing controls + status display (pause/resume/rescan)
+│   ├── indexingStatusModal.ts  # Queue viewer for deferred uploads/deletes
 │   ├── janitorProgressModal.ts  # Deduplication progress UI
-│   └── chatView.ts         # Chat interface (Phase 3)
+│   └── chatView.ts         # Chat interface
 ├── mcp/
-│   └── server.ts           # MCP server (Phase 4)
+│   └── server.ts           # MCP server
 └── utils/
     ├── logger.ts           # Logging utility
     ├── metadata.ts         # Metadata builder
@@ -224,9 +226,10 @@ src/
 
 **Implementation:** See [`src/types.ts`](src/types.ts) for all TypeScript interfaces:
 - `PersistedData` - Root data structure
-- `PluginSettings` - API key, store name, folders, concurrency, chunking config
+- `PluginSettings` - API key, store name, folders, concurrency, chunking config, and `uploadThrottleMs` (per-note debounce before uploads run)
 - `ChunkingConfig` - Token limits and overlap settings
-- `IndexState` - Map of vault paths to document states
+- `IndexState` - Map of vault paths to document states plus a persisted queue of pending jobs (uploads/deletes)
+- `IndexQueueEntry` - Queue metadata (operation type, hashes/remote IDs, retry counters, `readyAt` timestamp for throttling)
 - `IndexedDocState` - Document tracking (path, hash, status, tags, etc.)
 
 ### Gemini Document Metadata
@@ -243,50 +246,14 @@ When uploading a document, we attach metadata with the following structure:
 
 ---
 
-## 5. Implementation Phases
+## 5. Upcoming Work: MCP Server
 
-### Phase 1: Core Infrastructure (Week 1)
-- [x] Project setup (already done: p-queue, @google/genai, MCP SDK)
-- [x] State management ([`state.ts`](src/state/state.ts))
-- [x] Runner state management ([`runnerState.ts`](src/runner/runnerState.ts)) - **localStorage-based, desktop only**
-- [x] Vault utilities ([`vault.ts`](src/utils/vault.ts)) - **Vault key generation**
-- [x] Gemini service ([`geminiService.ts`](src/gemini/geminiService.ts))
-- [x] Hash utilities ([`hashUtils.ts`](src/indexing/hashUtils.ts))
-- [x] Basic settings UI (API key input + runner toggle) - [`settingsTab.ts`](src/ui/settingsTab.ts)
-- [x] Store discovery/creation - Integrated in [`main.ts`](main.ts) via `ensureGeminiResources()`
-- [x] Store management UI - [`storeManager.ts`](src/store/storeManager.ts)
+All core plugin features (state management, indexing engine, chat UI, queue throttling, and connection awareness) are implemented. The primary remaining roadmap item is the MCP server so external tools can query the vault without going through Obsidian's UI. Outstanding pieces:
 
-**Deliverable:** ✅ Can create a store, persist basic settings, and configure runner (desktop only)
-
-**IMPORTANT:** Plugin works on both desktop and mobile, but runner (indexing) only available on desktop due to Node.js crypto dependency in hashing utilities
-
-### Phase 2: Indexing Engine (Week 2)
-- [x] Index manager ([`indexManager.ts`](src/indexing/indexManager.ts))
-- [x] Queue implementation (using p-queue directly in IndexManager)
-- [x] Event handlers (create, modify, rename, delete) - Integrated via [`indexingController.ts`](src/indexing/indexingController.ts)
-- [x] Startup reconciliation - Implemented in `IndexManager.reconcileOnStartup()`
-- [x] Progress tracking in status bar - Real-time updates via `IndexingController`
-- [x] Manual commands (rebuild index, cleanup orphans) - Available in settings UI
-- [x] Indexing controller lifecycle management - [`indexingController.ts`](src/indexing/indexingController.ts)
-- [x] Indexing status modal UI - [`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts) with pause/resume/rescan controls
-
-**Deliverable:** ✅ Plugin indexes notes and keeps them in sync
-
-### Phase 3: Chat Interface (Week 3)
-- [ ] Chat view UI (`chatView.ts`)
-- [ ] Query interface to Gemini FileSearch
-- [ ] Citation rendering
-- [ ] Chat history management
-
-**Deliverable:** Users can chat with their indexed notes
-
-### Phase 4: MCP Server (Week 4)
-- [ ] Standalone MCP server (`mcp/server.ts`)
-- [ ] Tool: `keywordSearch` (local file search)
-- [ ] Tool: `semanticSearch` (Gemini FileSearch)
-- [ ] Resource: `note` (read note content by path)
-
-**Deliverable:** External tools (Claude Code, etc.) can query vault
+- Build a standalone MCP server (`mcp/server.ts`) that wraps the existing `StateManager` and `GeminiService` utilities
+- Expose tools such as `keywordSearch` (local vault scan) and `semanticSearch` (Gemini FileSearch) plus a `note` resource for retrieving file contents by path
+- Define authentication/connection strategy so the MCP server can reuse the saved API key without duplicating storage logic
+- Document setup/testing flow so developers can connect MCP-aware clients (e.g., Claude Code) to the plugin
 
 ---
 
@@ -324,6 +291,13 @@ Since all hashing is used for indexing operations (which only run on the runner 
 
 **Implementation:** See [`src/state/state.ts`](src/state/state.ts) for the `StateManager` class and [`src/types.ts`](src/types.ts) for all TypeScript interfaces (`PersistedData`, `PluginSettings`, `ChunkingConfig`, `IndexState`, `IndexedDocState`).
 
+#### Connection Manager ([`connectionManager.ts`](src/connection/connectionManager.ts))
+
+- Listens for browser `online`/`offline` events and records API key validation status sourced from `main.ts`
+- Derives a single `connected` flag (online **and** key valid) plus friendly `apiKeyError` copy for UI surfaces
+- Notifies subscribers (status bar, indexing controller, queue) so we can pause indexing when disconnected and auto-resume when back online
+- Centralizes connection checks for commands/settings/queue processing via helpers such as `requireConnection()`
+
 ### 6.3 Gemini Service ([`geminiService.ts`](src/gemini/geminiService.ts))
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
@@ -360,6 +334,13 @@ Orchestrates all indexing operations.
 - `pause()` / `resume()` / `clearQueue()` - Queue control methods
 - `waitForIdle()` - Wait for all queued jobs to complete
 - `dispose()` - Cleanup resources
+
+#### Queue persistence, throttling, and deduplication
+
+- The queue is persisted inside plugin state (`IndexState.queue`) so uploads survive reloads/crashes
+- Each entry carries a `readyAt` timestamp derived from the configurable `uploadThrottleMs`; edits reset the countdown so rapid saves collapse into one upload
+- Entries include retry counters + last attempt timestamps and are drained only when the connection manager reports `connected`
+- Empty files are filtered before enqueueing and, if needed, schedule remote deletions without wasting upload slots
 
 #### Smart Reconciliation for Rebuild Index
 
@@ -459,7 +440,7 @@ The settings UI adapts based on platform and runner status:
 **Desktop Runner Only (when runner toggle is enabled):**
 - ✅ Indexing Configuration
   - Included folders setting
-  - Upload concurrency slider
+  - Upload concurrency + throttle sliders
   - Chunking configuration (max tokens, overlap)
 - ✅ Manual Actions
   - Rebuild index button
@@ -468,6 +449,9 @@ The settings UI adapts based on platform and runner status:
   - Delete current store button
 - ✅ Index Status Display
   - Total/Ready/Pending/Error counts
+- ✅ Live queue controls
+  - Pause/resume/rescan/clear queue buttons surfaced directly in settings
+  - Queue monitor modal button shows deferred uploads/deletes with countdowns
 
 #### Implementation Notes
 
@@ -476,21 +460,19 @@ The settings UI adapts based on platform and runner status:
 - Store management methods use `getOrCreateGeminiService()` helper to create temporary GeminiService for non-runner devices
 - This allows mobile/non-runner devices to view store information even though they can't index
 
-### 6.7 Indexing Status Modal ([`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts))
+### 6.7 Indexing Queue Modal ([`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts))
 
-Real-time indexing status and control panel.
+Live view of pending uploads/deletes and their throttle countdowns.
 
 **File:** [`src/ui/indexingStatusModal.ts`](src/ui/indexingStatusModal.ts)
 
-**Implementation:** See [`src/ui/indexingStatusModal.ts`](src/ui/indexingStatusModal.ts) for the complete `IndexingStatusModal` class, including:
-- Real-time phase display (scanning/indexing/paused/idle)
-- Stats display (completed/total, failed, pending)
-- Pause/Resume toggle button
-- Re-scan vault button (triggers full reconciliation)
-- Clear queue button (removes pending jobs)
-- Subscribes to `IndexingController` for live updates
+**Implementation:**
+- Subscribes to `IndexingController` snapshots and polls `StateManager.getQueueEntries()` every second
+- Renders a table showing vault path, operation type, readiness (countdown vs waiting for connectivity), and retry attempts/ages
+- Surface phase + aggregate stats at the top so users understand overall progress
+- Provides read-only insight; active controls (pause/resume/rescan/clear) now live inside settings where they are easier to reach
 
-**Usage:** Opened from settings UI "Open status panel" button. Provides user control over indexing operations without disabling the runner.
+**Usage:** Opened from the "Queue monitor" button in settings. Helps users reason about deferred work caused by throttling or offline state.
 
 ### 6.8 Runner Pattern for Multi-Device Vaults
 
@@ -573,12 +555,12 @@ Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local
 ### 6.10 Initial Indexing Progress View *(Replaced by IndexingStatusModal)*
 
 **Status:** The planned `progressView.ts` has been replaced by [`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts), which provides:
-- ✅ Phase indicators (scanning, indexing, paused, idle)
-- ✅ Progress stats (completed/total, failed, pending)
-- ✅ Current status display
-- ✅ Pause/Resume controls
-- ✅ Re-scan vault functionality
-- ✅ Clear queue functionality
+- Phase indicators (scanning, indexing, paused, idle)
+- Progress stats (completed/total, failed, pending)
+- Current status display
+- Pause/Resume controls
+- Re-scan vault functionality
+- Clear queue functionality
 
 The IndexingStatusModal is opened on-demand from settings, providing better UX than a persistent progress view. It subscribes to `IndexingController` for real-time updates during both initial indexing and ongoing operations.
 
@@ -662,7 +644,7 @@ Stale documents created from sync edge cases are cleaned up by manual Janitor ru
 
 **IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.5).
 
-**Implementation:** Metadata filtering examples are documented here for reference. The actual implementation will be in Phase 3 (Chat Interface). Key differences:
+**Implementation:** Metadata filtering examples are documented here for reference. The production implementation lives inside the chat interface (`chatView.ts`). Key differences:
 - `generateContent` API: Uses `metadataFilter` (string, simple syntax)
 - `documents.query` API: Uses `metadataFilters[]` (array, structured objects)
 - **CRITICAL**: For `documents.query`, keys must be prefixed with `"chunk.custom_metadata."`
@@ -679,11 +661,11 @@ Stale documents created from sync edge cases are cleaned up by manual Janitor ru
 
 #### What Works on Mobile
 
-- ✅ Plugin loads successfully
-- ✅ Settings UI accessible
-- ✅ API key syncs via vault data
-- ✅ Future: Chat interface (Phase 3)
-- ✅ Future: Query/search features (Phase 3)
+- Plugin loads successfully
+- Settings UI accessible
+- API key syncs via vault data
+- Chat interface (via `chatView.ts`) works once a FileSearchStore exists
+- Query/search functionality (Gemini file search) available through chat when indexed data exists
 
 #### What's Desktop-Only (Runner)
 
@@ -721,10 +703,10 @@ The **Runner** (indexing engine) requires Node.js modules:
 3. **Desktop (Work PC)**: Plugin installed, runner disabled → can enable if needed
 
 **Key benefits:**
-- ✅ API key syncs across all devices via vault data
-- ✅ Mobile users can query/chat (Phase 3) even if they can't index
-- ✅ Runner state (`.json`) stored outside vault, doesn't sync
-- ✅ Each desktop machine has independent runner state
+- API key syncs across all devices via vault data
+- Mobile users can query/chat even if they can't index
+- Runner state (`.json`) stored outside vault, doesn't sync
+- Each desktop machine has independent runner state
 
 #### Mobile UX
 
@@ -793,10 +775,10 @@ On mobile devices, the settings UI shows:
 
 ### 8.4 Chunking Configuration Scope
 
-The chunking configuration (`maxTokensPerChunk`, `maxOverlapTokens`) is included in Phase 1 but adds complexity early. Consider:
+The chunking configuration (`maxTokensPerChunk`, `maxOverlapTokens`) ships in the base settings but adds complexity early. Consider:
 
 - **Option 1 (current):** Expose in settings from the start
-- **Option 2 (leaner MVP):** Hard-code sensible defaults (400/50) and add configuration in Phase 2 after validating with real usage
+- **Option 2 (leaner MVP):** Hard-code sensible defaults (400/50) and expose configuration later after validating with real usage
 
 The architecture supports both—chunking config is already isolated in `uploadDocument()`.
 
@@ -873,7 +855,7 @@ This separation provides:
 
 ### 8.10 MCP Canonical ID
 
-For the MCP server (Phase 4), decide on a **canonical document ID** early:
+For the MCP server, decide on a **canonical document ID** early:
 
 **Option 1: `vaultPath`** (transparent, human-friendly)
 ```json
@@ -913,7 +895,7 @@ The architecture supports both. Document this choice in `mcp/server.ts` and stic
 
 ### 8.12 Chat View Conversation State
 
-When implementing the chat view (Phase 3), decide where conversation state lives:
+When refining the chat view, decide where conversation state lives:
 - **Option 1:** Plugin state (persisted across restarts)
 - **Option 2:** In-memory only (ephemeral)
 - **Option 3:** LocalStorage-like (per-vault)
@@ -922,7 +904,7 @@ Also plan how to:
 - Map grounding chunks back to Obsidian files (use `obsidian_path` metadata)
 - Handle "open file at citation" links (use `workspace.openLinkText()`)
 
-Don't overstuff [`main.ts`](main.ts)—give chat its own module in `ui/chatView.ts` (planned for Phase 3).
+Don't overstuff [`main.ts`](main.ts)—keep chat-specific logic inside `ui/chatView.ts`.
 
 ### 8.13 State Persistence Optimization
 
@@ -980,33 +962,33 @@ This makes "Rebuild Index" safe and efficient for recovering from sync issues.
 
 ### Manual Testing Checklist
 
-Phase 1:
-- [ ] Plugin loads without errors
-- [ ] Settings tab displays correctly
-- [ ] API key can be saved
-- [ ] FileSearchStore is created with vault name
+Core plugin:
+- Plugin loads without errors
+- Settings tab displays correctly
+- API key can be saved
+- FileSearchStore is created with vault name
 
-Phase 2:
-- [ ] New markdown file triggers indexing
-- [ ] Modified file is re-indexed (hash changes)
-- [ ] Renamed file: old doc deleted, new doc created
-- [ ] Deleted file: Gemini doc deleted, state removed
-- [ ] Rebuild index clears state and reindexes all
-- [ ] Cleanup orphans removes stale documents
-- [ ] Status bar shows progress during indexing
-- [ ] Included folders setting works correctly
+Indexing flow:
+- New markdown file triggers indexing
+- Modified file is re-indexed (hash changes)
+- Renamed file: old doc deleted, new doc created
+- Deleted file: Gemini doc deleted, state removed
+- Rebuild index clears state and reindexes all
+- Cleanup orphans removes stale documents
+- Status bar shows progress during indexing
+- Included folders setting works correctly
 
-Phase 3:
-- [ ] Chat view opens successfully
-- [ ] Query returns relevant results
-- [ ] Citations are displayed with file paths
-- [ ] Can click citation to open note
+Chat experience:
+- Chat view opens successfully
+- Query returns relevant results
+- Citations are displayed with file paths
+- Can click citation to open note
 
-Phase 4:
-- [ ] MCP server starts successfully
-- [ ] keywordSearch tool works
-- [ ] semanticSearch tool works
-- [ ] Can query from Claude Code
+MCP server (future):
+- MCP server starts successfully
+- keywordSearch tool works
+- semanticSearch tool works
+- Can query from Claude Code
 
 ---
 
@@ -1453,28 +1435,21 @@ async onload() {
 
 ## 14. Conclusion
 
-This plan provides a complete blueprint for building EzRAG with robust multi-device support. The phased approach allows incremental delivery of value:
-- **Phase 1**: Basic infrastructure and settings (including runner pattern)
-- **Phase 2**: Full indexing and sync (core value)
-- **Phase 3**: In-app chat interface
-- **Phase 4**: MCP server for external tools
-
-The architecture maintains separation of concerns, making it easy to reuse code between the Obsidian plugin and standalone MCP server. The state management is vault-local and sync-friendly, and the Gemini integration follows best practices for the File Search API.
+This document provides a complete blueprint for EzRAG with robust multi-device support. The architecture maintains separation of concerns, making it easy to reuse code between the Obsidian plugin and a future MCP server. State management is vault-local and sync-friendly, and the Gemini integration follows File Search best practices.
 
 **Key strengths of this implementation:**
-- ✅ **Cross-platform**: Works on desktop AND mobile (indexing desktop-only, query/chat on all platforms)
-- ✅ **Multi-device safe**: Runner pattern prevents conflicts when vault is synced across machines
-- ✅ **Deduplication**: Manual Janitor with dedicated UI cleans up sync conflicts
-- ✅ **Resilient**: Retry logic with exponential backoff for transient errors
-- ✅ **Follows Obsidian best practices**: Leverages MetadataCache, prevents startup event flooding, proper resource cleanup
-- ✅ **Performance-optimized**: Synchronous hashing (Node crypto), single read/hash per file, non-blocking startup reconciliation, debounced state persistence
-- ✅ **Desktop-optimized indexing**: Leverages Node.js for reliable per-machine state and fast crypto operations
-- ✅ **Robust state management**: Deep merge for nested settings, external settings change handling, atomic operations
-- ✅ **Production-ready**: Proper error handling, concurrency limits, graceful degradation, comprehensive UI feedback
-- ✅ **Lifecycle management**: IndexingController provides clean start/stop/pause/resume with phase tracking
-- ✅ **User control**: IndexingStatusModal provides real-time status and controls without disabling runner
-- ✅ **Store management**: StoreManager enables non-runner devices to view store information
-- ✅ **Well-documented**: Comprehensive implementation caveats and best practices sections
+- **Cross-platform**: Works on desktop and mobile (indexing desktop-only, query/chat everywhere)
+- **Multi-device safe**: Runner pattern prevents conflicts when a vault is synced across machines
+- **Deduplication**: Manual Janitor with dedicated UI cleans up sync conflicts
+- **Resilient**: Retry logic with exponential backoff for transient errors
+- **Obsidian-aligned**: Leverages MetadataCache, avoids startup event flooding, cleans up resources
+- **Performance-optimized**: Synchronous hashing, single read/hash per file, non-blocking reconciliation, debounced persistence
+- **Desktop-focused indexing**: Node crypto + local runner state ensure reliable uploads
+- **Robust state management**: Deep merge for nested settings, safe update helpers
+- **Production-ready UX**: Error handling, concurrency limits, and clear in-app feedback
+- **Lifecycle management**: IndexingController centralizes start/stop/pause/resume with phase tracking
+- **User control**: Settings tab surfaces queue controls; queue modal explains deferred uploads
+- **Store management**: StoreManager enables non-runner devices to inspect stores
 
 ### Runner Pattern Summary
 

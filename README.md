@@ -173,7 +173,7 @@ A FileSearchStore is Gemini's container for indexed documents. EzRAG creates one
 
 - **Issues**: Report bugs on [GitHub Issues](https://github.com/yourusername/ezrag/issues)
 - **Feature Requests**: Submit on GitHub Discussions
-- **Documentation**: See [PLAN.md](./PLAN.md) for technical details
+- **Documentation**: See [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details
 
 ## License
 
@@ -185,7 +185,6 @@ Built with:
 - [Obsidian Plugin API](https://github.com/obsidianmd/obsidian-api)
 - [Google Generative AI SDK](https://www.npmjs.com/package/@google/genai)
 - [p-queue](https://www.npmjs.com/package/p-queue) for job queue management
-
 
 
 

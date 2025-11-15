@@ -1,20 +1,19 @@
-// src/ui/indexingStatusModal.ts - Indexing controls + status
+// src/ui/indexingStatusModal.ts - Queue viewer for indexing operations
 
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal } from 'obsidian';
 import { ControllerSnapshot, IndexingController, IndexingPhase } from '../indexing/indexingController';
+import { IndexQueueEntry } from '../types';
+import type EzRAGPlugin from '../../main';
 
 export class IndexingStatusModal extends Modal {
   private snapshot: ControllerSnapshot;
   private unsubscribe?: () => void;
   private phaseEl!: HTMLElement;
   private statsEl!: HTMLElement;
-  private pendingEl!: HTMLElement;
-  private pauseButton!: HTMLButtonElement;
-  private rescanButton!: HTMLButtonElement;
-  private clearButton!: HTMLButtonElement;
-  private isRunningAction = false;
+  private queueContainer!: HTMLElement;
+  private timer?: number;
 
-  constructor(app: App, private controller: IndexingController) {
+  constructor(app: App, private controller: IndexingController, private plugin: EzRAGPlugin) {
     super(app);
     this.snapshot = controller.getSnapshot();
   }
@@ -23,88 +22,79 @@ export class IndexingStatusModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl('h2', { text: 'Indexing status' });
+    contentEl.createEl('h2', { text: 'Indexing queue' });
 
     this.phaseEl = contentEl.createEl('p', { cls: 'indexing-phase' });
     this.statsEl = contentEl.createEl('p', { cls: 'indexing-stats' });
-    this.pendingEl = contentEl.createEl('p', { cls: 'indexing-pending' });
 
-    const buttonBar = contentEl.createDiv({ cls: 'indexing-button-bar' });
-    this.pauseButton = buttonBar.createEl('button');
-    this.rescanButton = buttonBar.createEl('button', { text: 'Re-scan vault' });
-    this.clearButton = buttonBar.createEl('button', { text: 'Clear queue' });
-
-    this.pauseButton.addEventListener('click', () => this.togglePause());
-    this.rescanButton.addEventListener('click', () => this.runRescan());
-    this.clearButton.addEventListener('click', () => this.clearQueue());
+    this.queueContainer = contentEl.createDiv({ cls: 'indexing-queue-container' });
 
     this.unsubscribe = this.controller.subscribe((snapshot) => {
       this.snapshot = snapshot;
-      this.render();
+      this.renderSummary();
+      this.renderQueue();
     });
 
-    this.render();
+    this.renderSummary();
+    this.renderQueue();
+
+    this.timer = window.setInterval(() => this.renderQueue(), 1000);
   }
 
   onClose(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    if (this.timer) {
+      window.clearInterval(this.timer);
+      this.timer = undefined;
+    }
     this.contentEl.empty();
   }
 
-  private render(): void {
+  private renderSummary(): void {
     const { phase, stats } = this.snapshot;
     const active = this.controller.isActive();
 
     this.phaseEl.setText(`Phase: ${this.getPhaseLabel(phase, active)}`);
-    this.statsEl.setText(`Completed: ${stats.completed}/${stats.total} · Failed: ${stats.failed}`);
-    this.pendingEl.setText(`Pending jobs: ${stats.pending}`);
-
-    if (!active) {
-      this.pauseButton.setText('Indexing inactive');
-      this.pauseButton.disabled = true;
-    } else if (phase === 'paused') {
-      this.pauseButton.setText('Resume indexing');
-      this.pauseButton.disabled = false;
-    } else {
-      this.pauseButton.setText('Pause indexing');
-      this.pauseButton.disabled = false;
-    }
-
-    this.rescanButton.disabled = !active || this.isRunningAction;
-    this.clearButton.disabled = !active || stats.pending === 0 || this.isRunningAction;
+    this.statsEl.setText(`Completed: ${stats.completed}/${Math.max(stats.total, stats.completed)} · Failed: ${stats.failed} · Pending: ${stats.pending}`);
   }
 
-  private async togglePause(): Promise<void> {
-    if (!this.controller.isActive()) return;
-    if (this.controller.isPaused()) {
-      this.controller.resume();
-    } else {
-      this.controller.pause();
-    }
-    this.render();
-  }
+  private renderQueue(): void {
+    if (!this.queueContainer) return;
 
-  private async runRescan(): Promise<void> {
-    if (!this.controller.isActive()) return;
-    this.isRunningAction = true;
-    this.render();
-    try {
-      await this.controller.runFullReconcile();
-      new Notice('Vault scan started');
-    } catch (err) {
-      console.error('[EzRAG] Failed to run full reconcile', err);
-      new Notice('Failed to start scan. See console for details.');
-    } finally {
-      this.isRunningAction = false;
-      this.render();
-    }
-  }
+    const entries = this.plugin.stateManager.getQueueEntries();
+    this.queueContainer.empty();
 
-  private clearQueue(): void {
-    if (!this.controller.isActive()) return;
-    this.controller.clearQueue();
-    new Notice('Cleared pending indexing jobs');
+    if (entries.length === 0) {
+      this.queueContainer.createEl('p', {
+        text: 'Queue is empty. Documents will appear here when uploads are throttled or waiting for connectivity.',
+        cls: 'setting-item-description'
+      });
+      return;
+    }
+
+    const table = this.queueContainer.createEl('table', { cls: 'indexing-queue-table' });
+    const thead = table.createEl('thead');
+    const headerRow = thead.createEl('tr');
+    ['Document', 'Operation', 'Status', 'Ready in', 'Attempts'].forEach((label) => {
+      headerRow.createEl('th', { text: label });
+    });
+
+    const tbody = table.createEl('tbody');
+    const sorted = [...entries].sort((a, b) => {
+      const aReady = a.readyAt ?? a.enqueuedAt ?? 0;
+      const bReady = b.readyAt ?? b.enqueuedAt ?? 0;
+      return aReady - bReady;
+    });
+
+    for (const entry of sorted) {
+      const row = tbody.createEl('tr');
+      row.createEl('td', { text: entry.vaultPath });
+      row.createEl('td', { text: entry.operation === 'upload' ? 'Upload' : 'Delete' });
+      row.createEl('td', { text: this.getEntryStatus(entry) });
+      row.createEl('td', { text: this.getReadyText(entry) });
+      row.createEl('td', { text: this.getAttemptsText(entry) });
+    }
   }
 
   private getPhaseLabel(phase: IndexingPhase, active: boolean): string {
@@ -122,5 +112,47 @@ export class IndexingStatusModal extends Modal {
       default:
         return 'Idle';
     }
+  }
+
+  private getEntryStatus(entry: IndexQueueEntry): string {
+    const docState = this.plugin.stateManager.getDocState(entry.vaultPath);
+    if (entry.operation === 'delete') {
+      return 'Pending delete';
+    }
+    if (docState?.status === 'error') {
+      return 'Error';
+    }
+    if (docState?.status === 'ready') {
+      return 'Ready';
+    }
+    return 'Pending';
+  }
+
+  private getReadyText(entry: IndexQueueEntry): string {
+    const now = Date.now();
+    const readyAt = entry.readyAt ?? entry.enqueuedAt ?? now;
+    if (readyAt > now) {
+      return `in ${this.formatDuration(readyAt - now)}`;
+    }
+    return this.plugin.isConnected() ? 'Ready' : 'Waiting for connection';
+  }
+
+  private getAttemptsText(entry: IndexQueueEntry): string {
+    if (!entry.attempts) {
+      return '0';
+    }
+
+    const last = entry.lastAttemptAt ? ` · last ${this.formatDuration(Date.now() - entry.lastAttemptAt)} ago` : '';
+    return `${entry.attempts}${last}`;
+  }
+
+  private formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes === 0) {
+      return `${seconds}s`;
+    }
+    return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
   }
 }

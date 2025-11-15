@@ -98,11 +98,69 @@ export class EzRAGSettingTab extends PluginSettingTab {
       statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
       statusEl.createEl('p', { text: `Error: ${stats.error}` });
 
+      const controller = this.plugin.indexingController;
+      if (controller) {
+        const controls = new Setting(containerEl)
+          .setName('Indexing controls')
+          .setDesc('Pause or resume indexing, force a vault scan, or clear the queue.');
+
+        controls.addButton((button) => {
+          const updateLabel = () => {
+            button.setButtonText(controller.isPaused() ? 'Resume' : 'Pause');
+          };
+          updateLabel();
+          button.onClick(() => {
+            if (!controller.isActive()) {
+              new Notice('Indexing is not active.');
+              return;
+            }
+            if (controller.isPaused()) {
+              controller.resume();
+            } else {
+              controller.pause();
+            }
+            updateLabel();
+          });
+        });
+
+        controls.addButton((button) => {
+          button.setButtonText('Rescan');
+          button.onClick(async () => {
+            if (!controller.isActive()) {
+              new Notice('Indexing is not active.');
+              return;
+            }
+            button.setDisabled(true);
+            try {
+              await controller.runFullReconcile();
+              new Notice('Vault scan started');
+            } catch (err) {
+              console.error('[EzRAG] Failed to run full reconcile', err);
+              new Notice('Failed to start scan. See console for details.');
+            } finally {
+              button.setDisabled(false);
+            }
+          });
+        });
+
+        controls.addButton((button) => {
+          button.setButtonText('Clear queue');
+          button.onClick(() => {
+            if (!controller.isActive()) {
+              new Notice('Indexing is not active.');
+              return;
+            }
+            controller.clearQueue();
+            new Notice('Cleared pending indexing jobs');
+          });
+        });
+      }
+
       new Setting(containerEl)
-        .setName('Live controls')
-        .setDesc('Open the indexing status panel to pause, resume, or rescan')
+        .setName('Queue monitor')
+        .setDesc('View throttled uploads and pending deletions.')
         .addButton(button => button
-          .setButtonText('Open status panel')
+          .setButtonText('View queue')
           .onClick(() => {
             this.plugin.openIndexingStatusModal();
           })
@@ -175,6 +233,21 @@ export class EzRAGSettingTab extends PluginSettingTab {
             await this.plugin.saveState();
           })
         );
+
+      new Setting(containerEl)
+        .setName('Upload throttle')
+        .setDesc('Delay before uploading a modified note (seconds). Helps batch rapid edits into a single upload.')
+        .addSlider(slider => {
+          const currentSeconds = Math.floor((this.plugin.stateManager.getSettings().uploadThrottleMs ?? 0) / 1000);
+          slider
+            .setLimits(0, 600, 10)
+            .setValue(currentSeconds)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              this.plugin.stateManager.updateSettings({ uploadThrottleMs: value * 1000 });
+              await this.plugin.saveState();
+            });
+        });
 
       // Chunking Configuration Section
       new Setting(containerEl).setName('Chunking Strategy').setHeading();

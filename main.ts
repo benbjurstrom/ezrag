@@ -392,7 +392,7 @@ export default class EzRAGPlugin extends Plugin {
 
   openIndexingStatusModal(): void {
     if (!this.indexingController) return;
-    new IndexingStatusModal(this.app, this.indexingController).open();
+    new IndexingStatusModal(this.app, this.indexingController, this).open();
   }
 
   async openChatInterface(): Promise<void> {
