@@ -95,9 +95,11 @@ export class GeminiService {
     }
 
     // Extract document name from operation response
+    // Response type: UploadToFileSearchStoreResponse
+    // Contains: { documentName: string, mimeType: string, sizeBytes: string }
     const response = operation.response as any;
-    if (response?.['@type']?.includes('Document')) {
-      return response.name as string;
+    if (response?.documentName) {
+      return response.documentName as string;
     }
 
     throw new Error('Upload failed: no document name in response');

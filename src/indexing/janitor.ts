@@ -32,11 +32,13 @@ export class Janitor {
   }
 
   /**
-   * Find existing document by pathHash (used during indexing to prevent duplicates)
+   * Find existing document by pathHash
    *
-   * This is called during the "hot path" when local state has no document ID.
-   * It checks if a document already exists remotely to avoid creating duplicates
-   * during multi-device sync scenarios.
+   * WARNING: This is EXPENSIVE - it lists ALL documents from Gemini.
+   * Should ONLY be used for debugging or one-off operations, NEVER in hot path.
+   * For bulk operations, use runDeduplication() instead which lists once and caches.
+   *
+   * @deprecated - Removed from hot path. Use manual deduplication instead.
    */
   async findExistingDocument(pathHash: string): Promise<string | null> {
     try {

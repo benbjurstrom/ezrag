@@ -111,17 +111,20 @@ User saves note → Vault event → Runner check: isRunner()?
                                     ↓
                           Job executes:
                           1. Check if local state has document ID
-                          2. If yes: Use it (hot path)
-                          3. If no: Check remote for existing doc by pathHash (cold path)
-                          4. Delete old doc if exists (use documents.get to verify)
-                          5. Upload new doc with metadata
-                          6. Poll until operation.done === true
-                          7. Update IndexedDocState
-                          8. Save state (syncs to other devices)
+                          2. If yes: Delete old doc (local state is source of truth)
+                          3. If no: Skip delete (new file, no old doc exists)
+                          4. Upload new doc with metadata
+                          5. Poll until operation.done === true
+                          6. Update IndexedDocState
+                          7. Save state (syncs to other devices)
                                     ↓
                           [If error: Retry with exponential backoff (3 attempts)]
                                     ↓ NO (not runner)
                           Ignore event (no indexing)
+
+NOTE: We do NOT check remote for existing documents during hot path.
+That would require listing ALL documents (expensive!).
+Edge case duplicates are cleaned up by manual Janitor deduplication.
 ```
 
 **Janitor Flow (Manual deduplication only):**
@@ -334,7 +337,7 @@ Orchestrates all indexing operations.
 - `rebuildIndex()` - Manual rebuild (clear state and reindex)
 - `cleanupOrphans()` - Remove documents that exist in Gemini but not in vault
 - `queueIndexJob()` - Queue with retry logic (exponential backoff)
-- `indexFile()` - Core indexing logic with sync conflict prevention
+- `indexFile()` - Core indexing logic (uses local state only, no remote checks)
 - `extractTags()` - Extract tags from frontmatter using MetadataCache
 
 ### 6.4 Settings UI ([`settingsTab.ts`](src/ui/settingsTab.ts))
@@ -528,7 +531,9 @@ Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local
 
 #### Integration with IndexManager
 
-The `IndexManager` checks for existing documents before uploading to prevent creating duplicates. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method for the sync conflict prevention logic.
+The `IndexManager` does NOT check for existing documents during normal indexing (hot path) - it uses local state only. This prevents expensive `listDocuments()` calls during bulk operations.
+
+Edge case duplicates (e.g., stale local state after multi-device sync) are handled by manual Janitor deduplication runs. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method.
 
 ---
 
@@ -757,7 +762,31 @@ For the MCP server (Phase 4), decide on a **canonical document ID** early:
 
 The architecture supports both. Document this choice in `mcp/server.ts` and stick to it for consistency.
 
-### 8.11 Chat View Conversation State
+### 8.11 Hot Path Performance: No Remote Checks
+
+**Critical optimization:** The indexing hot path does NOT check Gemini for existing documents before uploading. This would require listing ALL documents via pagination, which is catastrophically expensive:
+
+**Without this optimization (BAD):**
+- Initial indexing of 5,000 files
+- Each file calls `listDocuments()` = 250 API calls (pagination)
+- Total: 5,000 × 250 = **1,250,000 API calls** 😱
+- Time: ~10-15 hours just for API calls
+
+**With this optimization (GOOD):**
+- Initial indexing of 5,000 files
+- Each file: 1 upload = 1 API call
+- Total: 5,000 API calls ✅
+- Time: ~20-30 minutes (with concurrency=2)
+
+**Tradeoff:**
+- Edge case duplicates can occur (e.g., stale local state after sync)
+- These are cleaned up by manual Janitor deduplication (one-time cost)
+- Janitor lists documents once, finds duplicates, deletes them
+- Much better than checking on every single indexing operation
+
+**Implementation:** See `indexManager.ts:350` - local state is the source of truth, no remote lookup.
+
+### 8.12 Chat View Conversation State
 
 When implementing the chat view (Phase 3), decide where conversation state lives:
 - **Option 1:** Plugin state (persisted across restarts)

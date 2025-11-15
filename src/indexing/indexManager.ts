@@ -345,18 +345,12 @@ export class IndexManager {
 
     // Check if local state has a document ID
     const existingState = this.state.getDocState(file.path);
-    let geminiDocumentName = existingState?.geminiDocumentName;
+    const geminiDocumentName = existingState?.geminiDocumentName;
 
-    // SYNC CONFLICT PREVENTION: If no local ID, check if remote document exists
-    if (!geminiDocumentName) {
-      geminiDocumentName = await this.janitor.findExistingDocument(pathHash);
-
-      if (geminiDocumentName) {
-        // Remote document exists! This is a stale local state situation.
-        // Adopt the remote ID instead of creating a duplicate.
-        console.log(`[IndexManager] Adopting existing document for ${file.path}: ${geminiDocumentName}`);
-      }
-    }
+    // NOTE: We do NOT check remote for existing documents here.
+    // That would require listing all documents (expensive!).
+    // Instead, rely on manual Janitor deduplication to clean up any edge case duplicates.
+    // Per PLAN.md: Hot path uses local state only, Janitor is manual cleanup.
 
     // Delete old document if exists
     if (geminiDocumentName) {
