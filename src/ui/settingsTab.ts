@@ -87,16 +87,82 @@ export class EzRAGSettingTab extends PluginSettingTab {
     // Initial table render
     await this.renderStoreTable();
 
-    // Index Status Display (runner only - only relevant for indexing)
-    if (isRunner) {
-      new Setting(containerEl).setName('Index Status').setHeading();
+    // Runner Configuration Toggle (Desktop only)
+    if (isDesktop && this.plugin.runnerManager) {
+      new Setting(containerEl).setName('Indexing Configuration').setHeading();
 
+      const runnerManager = this.plugin.runnerManager;
+      const runnerState = runnerManager.getState();
+
+      new Setting(containerEl)
+        .setName('Use this device as the runner')
+        .addToggle(toggle => toggle
+          .setValue(runnerState.isRunner)
+          .onChange(async (value) => {
+            await runnerManager.setRunner(value);
+            const message = await this.plugin.handleRunnerStateChange();
+
+            this.display();
+
+            if (message) {
+              new Notice(message);
+            }
+          })
+        );
+
+      // Help text under toggle
+      containerEl.createDiv({
+        cls: 'setting-item-description',
+        text: 'Only one desktop should manage indexing for this vault. Turn this on for exactly one machine.\n' +
+          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}…` : '')
+      });
+
+      if (!runnerState.isRunner) {
+        containerEl.createDiv({
+          cls: 'setting-item-description',
+          text: 'Runner controls will appear below once this is enabled.'
+        });
+      }
+    }
+
+    // Index Status (runner only - below runner config)
+    if (isRunner) {
       const stats = this.plugin.getIndexStats();
-      const statusEl = containerEl.createDiv({ cls: 'ezrag-status' });
-      statusEl.createEl('p', { text: `Total documents: ${stats.total}` });
-      statusEl.createEl('p', { text: `Ready: ${stats.ready}` });
-      statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
-      statusEl.createEl('p', { text: `Error: ${stats.error}` });
+
+      // Stats cards (no heading, self-explanatory)
+      const statsContainer = containerEl.createDiv({ cls: 'ezrag-index-stats-container' });
+      const table = statsContainer.createEl('table', { cls: 'ezrag-index-stats-table' });
+      const tbody = table.createEl('tbody');
+      const row = tbody.createEl('tr');
+
+      // Total indexed
+      const totalCell = row.createEl('td');
+      totalCell.createEl('div', { text: String(stats.total), cls: 'ezrag-stat-value' });
+      totalCell.createEl('div', { text: 'Total', cls: 'ezrag-stat-label' });
+
+      // Ready
+      const readyCell = row.createEl('td');
+      readyCell.createEl('div', { text: String(stats.ready), cls: 'ezrag-stat-value' });
+      readyCell.createEl('div', { text: 'Ready', cls: 'ezrag-stat-label' });
+
+      // Pending
+      const pendingCell = row.createEl('td');
+      pendingCell.createEl('div', { text: String(stats.pending), cls: 'ezrag-stat-value' });
+      pendingCell.createEl('div', { text: 'Pending', cls: 'ezrag-stat-label' });
+
+      // Errors
+      const errorCell = row.createEl('td');
+      errorCell.createEl('div', { text: String(stats.error), cls: 'ezrag-stat-value' });
+      errorCell.createEl('div', { text: 'Errors', cls: 'ezrag-stat-label' });
+
+      // Queue button (simple button under cards, no Setting wrapper)
+      const queueButtonContainer = containerEl.createDiv({ cls: 'ezrag-queue-button-container' });
+      const queueButton = queueButtonContainer.createEl('button', {
+        text: 'Open queue'
+      });
+      queueButton.addEventListener('click', () => {
+        this.plugin.openIndexingStatusModal();
+      });
 
       const controller = this.plugin.indexingController;
       if (controller) {
@@ -155,56 +221,6 @@ export class EzRAGSettingTab extends PluginSettingTab {
           });
         });
       }
-
-      new Setting(containerEl)
-        .setName('Queue monitor')
-        .setDesc('View throttled uploads and pending deletions.')
-        .addButton(button => button
-          .setButtonText('View queue')
-          .onClick(() => {
-            this.plugin.openIndexingStatusModal();
-          })
-        );
-    }
-
-    // Runner Configuration Toggle (Desktop only, placed after general settings)
-    if (isDesktop && this.plugin.runnerManager) {
-      new Setting(containerEl).setName('Runner Configuration').setHeading();
-
-      const runnerManager = this.plugin.runnerManager;
-      const runnerState = runnerManager.getState();
-
-      new Setting(containerEl)
-        .setName('This machine is the runner')
-        .setDesc(
-          'Enable indexing on this machine. Only one desktop per vault should be the runner. ' +
-          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}…` : '')
-        )
-        .addToggle(toggle => toggle
-          .setValue(runnerState.isRunner)
-          .onChange(async (value) => {
-            await runnerManager.setRunner(value);
-            const message = await this.plugin.handleRunnerStateChange();
-
-            this.display();
-
-            if (message) {
-              new Notice(message);
-            }
-          })
-        );
-
-      if (!runnerState.isRunner) {
-        containerEl.createDiv({
-          cls: 'setting-item-description',
-          text: 'Indexing controls appear below once this machine is set as the runner.'
-        });
-      }
-    }
-
-    // INDEXING CONTROLS (runner only, below toggle)
-    if (isRunner) {
-      new Setting(containerEl).setName('Indexing Configuration').setHeading();
 
       // Included Folders
       new Setting(containerEl)

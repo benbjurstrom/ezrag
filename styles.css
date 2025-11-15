@@ -490,3 +490,161 @@ button.ezrag-chat-send {
   width: 16px;
   height: 16px;
 }
+
+/* Queue Modal Styling */
+.ezrag-queue-modal {
+  width: 80vw;
+  max-width: 900px;
+}
+
+.ezrag-queue-summary {
+  margin-bottom: var(--size-4-4);
+  padding: var(--size-4-3);
+  background: var(--background-secondary);
+  border-radius: var(--radius-m);
+}
+
+.ezrag-queue-phase {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  margin-bottom: var(--size-4-1);
+}
+
+.ezrag-queue-stats {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ezrag-queue-table-container {
+  margin-top: var(--size-4-3);
+  overflow-x: auto;
+}
+
+.ezrag-queue-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-2);
+}
+
+.ezrag-queue-table thead {
+  background: var(--background-secondary);
+  border-bottom: 2px solid var(--background-modifier-border);
+}
+
+.ezrag-queue-table th {
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: left;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ezrag-queue-table tbody tr {
+  border-bottom: 1px solid var(--background-modifier-border);
+  transition: background-color 0.1s ease;
+}
+
+.ezrag-queue-table tbody tr:hover {
+  background: var(--background-secondary);
+}
+
+.ezrag-queue-table td {
+  padding: var(--size-4-2) var(--size-4-3);
+  color: var(--text-normal);
+}
+
+/* Document path column - allow text wrap for long paths */
+.ezrag-queue-doc {
+  max-width: 250px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Align numeric/status columns to center or right */
+.ezrag-queue-table td:nth-child(2),
+.ezrag-queue-table td:nth-child(3) {
+  text-align: center;
+}
+
+.ezrag-queue-table th:nth-child(2),
+.ezrag-queue-table th:nth-child(3) {
+  text-align: center;
+}
+
+/* Ready time column with fixed width to prevent bouncing */
+.ezrag-queue-ready {
+  min-width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ezrag-queue-table th:nth-child(4) {
+  text-align: right;
+}
+
+/* Attempts column with fixed width */
+.ezrag-queue-attempts {
+  min-width: 140px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ezrag-queue-table th:nth-child(5) {
+  text-align: right;
+}
+
+/* Index Stats Table Styling */
+.ezrag-index-stats-container {
+  margin-top: var(--size-4-2);
+  margin-bottom: var(--size-4-2);
+}
+
+.ezrag-index-stats-table {
+  width: 100%;
+  max-width: 600px;
+  border-collapse: collapse;
+  background: var(--background-secondary);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.ezrag-index-stats-table tbody tr {
+  display: flex;
+  gap: var(--size-4-2);
+}
+
+.ezrag-index-stats-table td {
+  flex: 1;
+  padding: var(--size-4-3);
+  text-align: center;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.ezrag-index-stats-table td:last-child {
+  border-right: none;
+}
+
+.ezrag-stat-value {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  margin-bottom: var(--size-2-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ezrag-stat-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Queue Button Under Stats */
+.ezrag-queue-button-container {
+  margin-top: var(--size-4-3);
+  margin-bottom: var(--size-4-4);
+  text-align: right;
+}

@@ -12,6 +12,7 @@ export class IndexingStatusModal extends Modal {
   private statsEl!: HTMLElement;
   private queueContainer!: HTMLElement;
   private timer?: number;
+  private tableRows: Map<string, HTMLTableRowElement> = new Map();
 
   constructor(app: App, private controller: IndexingController, private plugin: EzRAGPlugin) {
     super(app);
@@ -22,23 +23,31 @@ export class IndexingStatusModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl('h2', { text: 'Indexing queue' });
+    // Set modal width
+    this.modalEl.addClass('ezrag-queue-modal');
 
-    this.phaseEl = contentEl.createEl('p', { cls: 'indexing-phase' });
-    this.statsEl = contentEl.createEl('p', { cls: 'indexing-stats' });
+    // Use setTitle for proper modal header
+    this.setTitle('Indexing Queue');
 
-    this.queueContainer = contentEl.createDiv({ cls: 'indexing-queue-container' });
+    // Summary section
+    const summaryEl = contentEl.createDiv({ cls: 'ezrag-queue-summary' });
+    this.phaseEl = summaryEl.createEl('div', { cls: 'ezrag-queue-phase' });
+    this.statsEl = summaryEl.createEl('div', { cls: 'ezrag-queue-stats' });
+
+    // Queue table container
+    this.queueContainer = contentEl.createDiv({ cls: 'ezrag-queue-table-container' });
 
     this.unsubscribe = this.controller.subscribe((snapshot) => {
       this.snapshot = snapshot;
       this.renderSummary();
-      this.renderQueue();
+      this.rebuildQueue();
     });
 
     this.renderSummary();
-    this.renderQueue();
+    this.rebuildQueue();
 
-    this.timer = window.setInterval(() => this.renderQueue(), 1000);
+    // Update only time-dependent cells every second
+    this.timer = window.setInterval(() => this.updateTimeCells(), 1000);
   }
 
   onClose(): void {
@@ -48,6 +57,7 @@ export class IndexingStatusModal extends Modal {
       window.clearInterval(this.timer);
       this.timer = undefined;
     }
+    this.tableRows.clear();
     this.contentEl.empty();
   }
 
@@ -59,11 +69,15 @@ export class IndexingStatusModal extends Modal {
     this.statsEl.setText(`Completed: ${stats.completed}/${Math.max(stats.total, stats.completed)} · Failed: ${stats.failed} · Pending: ${stats.pending}`);
   }
 
-  private renderQueue(): void {
+  /**
+   * Rebuild the entire queue table (called when entries change)
+   */
+  private rebuildQueue(): void {
     if (!this.queueContainer) return;
 
     const entries = this.plugin.stateManager.getQueueEntries();
     this.queueContainer.empty();
+    this.tableRows.clear();
 
     if (entries.length === 0) {
       this.queueContainer.createEl('p', {
@@ -73,10 +87,11 @@ export class IndexingStatusModal extends Modal {
       return;
     }
 
-    const table = this.queueContainer.createEl('table', { cls: 'indexing-queue-table' });
+    // Create table with styling similar to FileStores table
+    const table = this.queueContainer.createEl('table', { cls: 'ezrag-queue-table' });
     const thead = table.createEl('thead');
     const headerRow = thead.createEl('tr');
-    ['Document', 'Operation', 'Status', 'Ready in', 'Attempts'].forEach((label) => {
+    ['Document', 'Operation', 'Status', 'Ready In', 'Attempts'].forEach((label) => {
       headerRow.createEl('th', { text: label });
     });
 
@@ -89,11 +104,60 @@ export class IndexingStatusModal extends Modal {
 
     for (const entry of sorted) {
       const row = tbody.createEl('tr');
-      row.createEl('td', { text: entry.vaultPath });
+      const key = `${entry.vaultPath}-${entry.operation}`;
+      this.tableRows.set(key, row);
+
+      // Document name (static)
+      row.createEl('td', { text: entry.vaultPath, cls: 'ezrag-queue-doc' });
+
+      // Operation (static)
       row.createEl('td', { text: entry.operation === 'upload' ? 'Upload' : 'Delete' });
+
+      // Status (static)
       row.createEl('td', { text: this.getEntryStatus(entry) });
-      row.createEl('td', { text: this.getReadyText(entry) });
-      row.createEl('td', { text: this.getAttemptsText(entry) });
+
+      // Ready in (dynamic - updated by timer)
+      row.createEl('td', {
+        text: this.getReadyText(entry),
+        cls: 'ezrag-queue-ready',
+        attr: { 'data-ready-at': String(entry.readyAt ?? entry.enqueuedAt ?? 0) }
+      });
+
+      // Attempts (dynamic - updated by timer)
+      row.createEl('td', {
+        text: this.getAttemptsText(entry),
+        cls: 'ezrag-queue-attempts',
+        attr: {
+          'data-attempts': String(entry.attempts ?? 0),
+          'data-last-attempt': String(entry.lastAttemptAt ?? 0)
+        }
+      });
+    }
+  }
+
+  /**
+   * Update only time-dependent cells (called every second)
+   */
+  private updateTimeCells(): void {
+    const entries = this.plugin.stateManager.getQueueEntries();
+    const now = Date.now();
+
+    for (const entry of entries) {
+      const key = `${entry.vaultPath}-${entry.operation}`;
+      const row = this.tableRows.get(key);
+      if (!row) continue;
+
+      // Update "Ready In" cell
+      const readyCell = row.querySelector('.ezrag-queue-ready') as HTMLElement;
+      if (readyCell) {
+        readyCell.setText(this.getReadyText(entry));
+      }
+
+      // Update "Attempts" cell if last attempt time changed
+      const attemptsCell = row.querySelector('.ezrag-queue-attempts') as HTMLElement;
+      if (attemptsCell && entry.lastAttemptAt) {
+        attemptsCell.setText(this.getAttemptsText(entry));
+      }
     }
   }
 
