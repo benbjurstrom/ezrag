@@ -185,3 +185,5 @@ Built with:
 - [Obsidian Plugin API](https://github.com/obsidianmd/obsidian-api)
 - [Google Generative AI SDK](https://www.npmjs.com/package/@google/genai)
 - [p-queue](https://www.npmjs.com/package/p-queue) for job queue management
+
+

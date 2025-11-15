@@ -136,9 +136,10 @@ export class GeminiService {
    * - Response contains: { documents: [], nextPageToken: string }
    * - Loop continues while nextPageToken is present
    */
-  async listDocuments(storeName: string): Promise<any[]> {
+  async listDocuments(storeName: string, options?: { onPage?: (info: { pageIndex: number; docs: any[]; nextPageToken?: string }) => void }): Promise<any[]> {
     const allDocs: any[] = [];
     let pageToken: string | undefined = undefined;
+    let pageIndex = 0;
 
     do {
       const response: any = await this.ai.fileSearchStores.documents.list({
@@ -149,15 +150,24 @@ export class GeminiService {
         }
       });
 
+      const pageDocs: any[] = [];
       // Collect documents from this page
       // SDK returns an async iterable, iterate through all documents
       for await (const doc of response) {
         allDocs.push(doc);
+        pageDocs.push(doc);
       }
+
+      options?.onPage?.({
+        pageIndex,
+        docs: pageDocs,
+        nextPageToken: response.nextPageToken,
+      });
 
       // Get next page token from response
       // If nextPageToken is present, there are more pages to fetch
       pageToken = response.nextPageToken;
+      pageIndex++;
 
     } while (pageToken);
 

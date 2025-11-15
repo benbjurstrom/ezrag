@@ -130,7 +130,7 @@ export default class EzRAGPlugin extends Plugin {
 
     this.addCommand({
       id: 'run-janitor',
-      name: 'Run Deduplication',
+      name: 'Clean Up Remote Index',
       checkCallback: (checking) => {
         if (!this.runnerManager?.isRunner()) return false;
         if (!checking) this.runJanitorWithUI();
@@ -317,7 +317,7 @@ export default class EzRAGPlugin extends Plugin {
 
     const confirmed = await this.confirmAction(
       'Rebuild Index',
-      'This will clear the local index and re-index all files. Continue?'
+      'This will clear the local state and reconcile with Gemini. Unchanged files will be restored without re-uploading. Continue?'
     );
 
     if (confirmed) {
@@ -355,7 +355,7 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   /**
-   * Run deduplication with UI
+   * Run remote index cleanup with UI
    */
   async runJanitorWithUI(): Promise<void> {
     const manager = this.indexingController?.getIndexManager();
@@ -369,7 +369,7 @@ export default class EzRAGPlugin extends Plugin {
 
     try {
       const janitor = manager.getJanitor();
-      const stats = await janitor.runDeduplication();
+      const stats = await janitor.runDeduplication(update => modal.updateProgress(update));
 
       modal.updateStats(stats);
       modal.markComplete();
@@ -377,12 +377,12 @@ export default class EzRAGPlugin extends Plugin {
       await this.saveState();
 
       new Notice(
-        `Deduplication complete: ${stats.duplicatesDeleted} duplicates removed, ${stats.stateUpdated} state updates`
+        `Cleanup complete: ${stats.totalRemoved} stale document${stats.totalRemoved === 1 ? '' : 's'} removed`
       );
     } catch (err) {
-      console.error('[EzRAG] Deduplication failed:', err);
+      console.error('[EzRAG] Remote index cleanup failed:', err);
       modal.markFailed((err as Error).message);
-      new Notice('Deduplication failed. See console for details.');
+      new Notice('Remote index cleanup failed. See console for details.');
     }
   }
 

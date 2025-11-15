@@ -60,15 +60,22 @@ export class IndexManager {
       geminiService: this.gemini,
       stateManager: this.state,
       storeName: settings.storeName,
-      onProgress: (msg) => console.log(`[Janitor] ${msg}`),
+      onProgress: (update) => {
+        if (update.message) {
+          console.log(`[Janitor] ${update.message}`);
+        }
+      },
     });
   }
 
   /**
    * Startup reconciliation: scan all files and queue changed ones
    * Note: Does not wait for queue to finish - jobs run in background
+   *
+   * @param syncWithRemote - If true, fetches remote documents and reconciles local state
+   *                         (used by rebuildIndex to avoid duplicates)
    */
-  async reconcileOnStartup(): Promise<void> {
+  async reconcileOnStartup(syncWithRemote: boolean = false): Promise<void> {
     const files = this.getIndexableFiles();
 
     this.stats.total = 0;
@@ -79,14 +86,61 @@ export class IndexManager {
     console.log(`[IndexManager] Reconciling ${files.length} files...`);
     this.updateProgress('Scanning');
 
+    // If syncing with remote, fetch all remote docs first
+    let remoteDocsByPathHash = new Map<string, any>();
+    if (syncWithRemote) {
+      console.log('[IndexManager] Fetching remote documents for smart reconciliation...');
+      try {
+        const settings = this.state.getSettings();
+        const remoteDocs = await this.gemini.listDocuments(settings.storeName);
+
+        for (const doc of remoteDocs) {
+          const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
+          if (pathHashMeta?.stringValue) {
+            remoteDocsByPathHash.set(pathHashMeta.stringValue, doc);
+          }
+        }
+        console.log(`[IndexManager] Found ${remoteDocsByPathHash.size} remote documents`);
+      } catch (err) {
+        console.error('[IndexManager] Failed to fetch remote docs, proceeding without sync:', err);
+      }
+    }
+
     // Scan all files and queue those that need indexing
     // Read and hash once to avoid double-read later
     for (const file of files) {
       try {
         const content = await this.vault.read(file);
-        const contentHash = computeContentHash(content); // Synchronous
+        const contentHash = computeContentHash(content);
+        const pathHash = computePathHash(file.path);
 
         const state = this.state.getDocState(file.path);
+
+        // If syncing with remote, check if we can restore state from remote
+        if (syncWithRemote && !state && remoteDocsByPathHash.has(pathHash)) {
+          const remoteDoc = remoteDocsByPathHash.get(pathHash);
+          const remoteHashMeta = remoteDoc.customMetadata?.find((m: any) => m.key === 'obsidian_content_hash');
+          const remoteHash = remoteHashMeta?.stringValue;
+
+          if (remoteHash === contentHash) {
+            // Perfect match! Restore local state without re-uploading
+            console.log(`[IndexManager] Restored state for ${file.path} from remote (hash match)`);
+            this.state.setDocState(file.path, {
+              vaultPath: file.path,
+              geminiDocumentName: remoteDoc.name,
+              contentHash,
+              pathHash,
+              status: 'ready',
+              lastLocalMtime: file.stat.mtime,
+              lastIndexedAt: Date.now(),
+              tags: this.extractTags(file),
+            });
+            continue; // Skip indexing
+          } else {
+            // Hash mismatch, need to re-index
+            console.log(`[IndexManager] Content changed for ${file.path}, will re-index`);
+          }
+        }
 
         // Determine if indexing is needed
         const needsIndexing = !state ||
@@ -205,12 +259,13 @@ export class IndexManager {
   }
 
   /**
-   * Manual rebuild: clear index and requeue everything
+   * Manual rebuild: clear local state and reconcile with remote
+   * Uses smart reconciliation to avoid re-uploading unchanged documents
    */
   async rebuildIndex(): Promise<void> {
     this.state.clearIndex();
     this.notifyStateChange();
-    await this.reconcileOnStartup();
+    await this.reconcileOnStartup(true); // syncWithRemote = true
   }
 
   /**
@@ -251,7 +306,7 @@ export class IndexManager {
   }
 
   /**
-   * Get Janitor instance for manual deduplication
+   * Get Janitor instance for manual remote index cleanup
    */
   getJanitor(): Janitor {
     return this.janitor;
@@ -384,6 +439,7 @@ export class IndexManager {
       { key: 'obsidian_vault', stringValue: this.vaultName },
       { key: 'obsidian_path', stringValue: file.path },
       { key: 'obsidian_path_hash', stringValue: pathHash },
+      { key: 'obsidian_content_hash', stringValue: contentHash },
       { key: 'obsidian_mtime', numericValue: file.stat.mtime },
     ];
 
@@ -398,7 +454,7 @@ export class IndexManager {
 
     // NOTE: We do NOT check remote for existing documents here.
     // That would require listing all documents (expensive!).
-    // Instead, rely on manual Janitor deduplication to clean up any edge case duplicates.
+    // Instead, rely on manual Janitor cleanup to remove any edge case duplicates or stale documents.
     // Per PLAN.md: Hot path uses local state only, Janitor is manual cleanup.
 
     // Delete old document if exists

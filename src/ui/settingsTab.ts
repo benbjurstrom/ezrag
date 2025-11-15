@@ -21,44 +21,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
     const isDesktop = Platform.isDesktopApp;
     const isRunner = isDesktop && this.plugin.runnerManager?.isRunner();
 
-    // Runner Configuration Section (Desktop only)
-    if (isDesktop) {
-      containerEl.createEl('h3', { text: 'Runner Configuration' });
-
-      const runnerState = this.plugin.runnerManager!.getState();
-
-      new Setting(containerEl)
-        .setName('This machine is the runner')
-        .setDesc(
-          'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
-          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}...` : '')
-        )
-        .addToggle(toggle => toggle
-          .setValue(runnerState.isRunner)
-          .onChange(async (value) => {
-            await this.plugin.runnerManager!.setRunner(value);
-            const message = await this.plugin.handleRunnerStateChange();
-
-            this.display();
-
-            if (message) {
-              new Notice(message);
-            }
-          })
-        );
-
-      // If not runner, show message
-      if (!runnerState.isRunner) {
-        containerEl.createDiv({
-          cls: 'setting-item-description',
-          text: 'Indexing controls are hidden because this machine is not the runner. ' +
-                'Enable "This machine is the runner" above to access indexing settings.'
-        });
-      }
-
-      // Separator
-      containerEl.createEl('hr');
-    } else {
+    if (!isDesktop) {
       // Mobile platform - show info message
       containerEl.createEl('h3', { text: 'Mobile Platform' });
       containerEl.createDiv({
@@ -101,7 +64,104 @@ export class EzRAGSettingTab extends PluginSettingTab {
         })
       );
 
-    // INDEXING CONTROLS (Desktop Runner Only)
+    // Store Management Section (Read-only operations visible on all platforms)
+    containerEl.createEl('hr');
+    containerEl.createEl('h3', { text: 'Store Management' });
+
+    // Current Store Stats (available on all platforms if API key is set)
+    new Setting(containerEl)
+      .setName('Current Store Stats')
+      .setDesc('View statistics for the current vault\'s FileSearchStore')
+      .addButton(button => button
+        .setButtonText('View Stats')
+        .onClick(async () => {
+          await this.plugin.storeManager?.showStoreStats();
+        })
+      );
+
+    // List All Stores (available on all platforms if API key is set)
+    new Setting(containerEl)
+      .setName('List All Stores')
+      .setDesc('View all FileSearchStores associated with this API key')
+      .addButton(button => button
+        .setButtonText('List Stores')
+        .onClick(async () => {
+          await this.plugin.storeManager?.listAllStores();
+        })
+      );
+
+    // Delete Current Store (runner only - destructive operation)
+    if (isRunner) {
+      new Setting(containerEl)
+        .setName('Delete Current Store')
+        .setDesc('Permanently delete the FileSearchStore for this vault (cannot be undone!)')
+        .addButton(button => button
+          .setButtonText('Delete Store')
+          .setWarning()
+          .onClick(async () => {
+            await this.plugin.storeManager?.deleteCurrentStore();
+          })
+        );
+    }
+
+    // Index Status Display (runner only - only relevant for indexing)
+    if (isRunner) {
+      containerEl.createEl('h3', { text: 'Index Status' });
+
+      const stats = this.plugin.getIndexStats();
+      const statusEl = containerEl.createDiv({ cls: 'ezrag-status' });
+      statusEl.createEl('p', { text: `Total documents: ${stats.total}` });
+      statusEl.createEl('p', { text: `Ready: ${stats.ready}` });
+      statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
+      statusEl.createEl('p', { text: `Error: ${stats.error}` });
+
+      new Setting(containerEl)
+        .setName('Live controls')
+        .setDesc('Open the indexing status panel to pause, resume, or rescan')
+        .addButton(button => button
+          .setButtonText('Open status panel')
+          .onClick(() => {
+            this.plugin.openIndexingStatusModal();
+          })
+        );
+    }
+
+    // Runner Configuration Toggle (Desktop only, placed after general settings)
+    if (isDesktop && this.plugin.runnerManager) {
+      containerEl.createEl('hr');
+      containerEl.createEl('h3', { text: 'Runner Configuration' });
+
+      const runnerState = this.plugin.runnerManager.getState();
+
+      new Setting(containerEl)
+        .setName('This machine is the runner')
+        .setDesc(
+          'Enable indexing on this machine. Only one desktop per vault should be the runner. ' +
+          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}…` : '')
+        )
+        .addToggle(toggle => toggle
+          .setValue(runnerState.isRunner)
+          .onChange(async (value) => {
+            await this.plugin.runnerManager!.setRunner(value);
+            const message = await this.plugin.handleRunnerStateChange();
+
+            this.display();
+
+            if (message) {
+              new Notice(message);
+            }
+          })
+        );
+
+      if (!runnerState.isRunner) {
+        containerEl.createDiv({
+          cls: 'setting-item-description',
+          text: 'Indexing controls appear below once this machine is set as the runner.'
+        });
+      }
+    }
+
+    // INDEXING CONTROLS (runner only, below toggle)
     if (isRunner) {
       containerEl.createEl('hr');
       containerEl.createEl('h3', { text: 'Indexing Configuration' });
@@ -169,7 +229,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
           })
         );
 
-      // Manual Commands Section
+      // Manual Actions Section
       containerEl.createEl('h3', { text: 'Manual Actions' });
 
       // Rebuild Index
@@ -183,76 +243,14 @@ export class EzRAGSettingTab extends PluginSettingTab {
           })
         );
 
-      // Run Deduplication (Manual Janitor)
+      // Clean Up Remote Index (Manual Janitor)
       new Setting(containerEl)
-        .setName('Run Deduplication')
-        .setDesc('Find and remove duplicate documents created by multi-device sync conflicts')
+        .setName('Clean Up Gemini Index')
+        .setDesc('Find and remove Gemini documents that don\'t match the vault\'s current state.')
         .addButton(button => button
-          .setButtonText('Run Deduplication')
+          .setButtonText('Clean Up')
           .onClick(async () => {
             await this.plugin.runJanitorWithUI();
-          })
-        );
-    }
-
-    // Store Management Section (Read-only operations visible on all platforms)
-    containerEl.createEl('hr');
-    containerEl.createEl('h3', { text: 'Store Management' });
-
-    // Current Store Stats (available on all platforms if API key is set)
-    new Setting(containerEl)
-      .setName('Current Store Stats')
-      .setDesc('View statistics for the current vault\'s FileSearchStore')
-      .addButton(button => button
-        .setButtonText('View Stats')
-        .onClick(async () => {
-          await this.plugin.storeManager?.showStoreStats();
-        })
-      );
-
-    // List All Stores (available on all platforms if API key is set)
-    new Setting(containerEl)
-      .setName('List All Stores')
-      .setDesc('View all FileSearchStores associated with this API key')
-      .addButton(button => button
-        .setButtonText('List Stores')
-        .onClick(async () => {
-          await this.plugin.storeManager?.listAllStores();
-        })
-      );
-
-    // Delete Current Store (runner only - destructive operation)
-    if (isRunner) {
-      new Setting(containerEl)
-        .setName('Delete Current Store')
-        .setDesc('Permanently delete the FileSearchStore for this vault (cannot be undone!)')
-        .addButton(button => button
-          .setButtonText('Delete Store')
-          .setWarning()
-          .onClick(async () => {
-            await this.plugin.storeManager?.deleteCurrentStore();
-          })
-        );
-    }
-
-    // Index Status Display (runner only - only relevant for indexing)
-    if (isRunner) {
-      containerEl.createEl('h3', { text: 'Index Status' });
-
-      const stats = this.plugin.getIndexStats();
-      const statusEl = containerEl.createDiv({ cls: 'ezrag-status' });
-      statusEl.createEl('p', { text: `Total documents: ${stats.total}` });
-      statusEl.createEl('p', { text: `Ready: ${stats.ready}` });
-      statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
-      statusEl.createEl('p', { text: `Error: ${stats.error}` });
-
-      new Setting(containerEl)
-        .setName('Live controls')
-        .setDesc('Open the indexing status panel to pause, resume, or rescan')
-        .addButton(button => button
-          .setButtonText('Open status panel')
-          .onClick(() => {
-            this.plugin.openIndexingStatusModal();
           })
         );
     }

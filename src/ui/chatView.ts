@@ -1,31 +1,103 @@
-// src/ui/chatView.ts - Chat interface inspired by the sample React project
+// src/ui/chatView.ts - Mobile-first chat interface using Obsidian design system
 
-import { App, ItemView, Notice, WorkspaceLeaf, Modal } from 'obsidian';
+import { App, ItemView, Notice, WorkspaceLeaf, Modal, setIcon } from 'obsidian';
 import type EzRAGPlugin from '../../main';
 import { ChatMessage, ChatModel, GroundingChunk } from '../types';
 
 export const CHAT_VIEW_TYPE = 'ezrag-chat-view';
 
 class SourceModal extends Modal {
-  constructor(app: App, private html: string) {
+  constructor(app: App, private source: { text: string; index: number }) {
     super(app);
   }
 
   onOpen(): void {
-    this.modalEl.addClass('ezrag-source-modal');
-    this.contentEl.empty();
+    const { contentEl } = this;
+    contentEl.empty();
 
-    const container = this.contentEl.createDiv('ezrag-source-modal__container');
-    container.createEl('h3', { text: 'Source excerpt' });
-    const body = container.createDiv('ezrag-source-modal__body');
-    body.innerHTML = this.html;
+    // Use standard modal structure
+    contentEl.createEl('h3', { text: `Source ${this.source.index}` });
 
-    const footer = container.createDiv('ezrag-source-modal__footer');
-    const closeBtn = footer.createEl('button', {
+    const sourceContent = contentEl.createDiv('modal-content');
+    sourceContent.innerHTML = this.renderMarkdown(this.source.text);
+
+    // Use standard button container
+    const buttonContainer = contentEl.createDiv('modal-button-container');
+    const closeBtn = buttonContainer.createEl('button', {
       text: 'Close',
-      cls: 'ezrag-chat-button',
+      cls: 'mod-cta'
     });
     closeBtn.addEventListener('click', () => this.close());
+  }
+
+  private renderMarkdown(text: string): string {
+    if (!text) return '';
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const lines = escaped.split('\n');
+    let html = '';
+    let listType: 'ul' | 'ol' | null = null;
+    let paragraph = '';
+
+    const flushParagraph = () => {
+      if (paragraph) {
+        html += `<p>${paragraph}</p>`;
+        paragraph = '';
+      }
+    };
+
+    const flushList = () => {
+      if (listType) {
+        html += `</${listType}>`;
+        listType = null;
+      }
+    };
+
+    for (const raw of lines) {
+      const line = raw
+        .replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>')
+        .replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      const ordered = line.match(/^\s*\d+\.\s(.*)/);
+      const unordered = line.match(/^\s*[\*\-]\s(.*)/);
+
+      if (ordered) {
+        flushParagraph();
+        if (listType !== 'ol') {
+          flushList();
+          html += '<ol>';
+          listType = 'ol';
+        }
+        html += `<li>${ordered[1]}</li>`;
+        continue;
+      }
+
+      if (unordered) {
+        flushParagraph();
+        if (listType !== 'ul') {
+          flushList();
+          html += '<ul>';
+          listType = 'ul';
+        }
+        html += `<li>${unordered[1]}</li>`;
+        continue;
+      }
+
+      flushList();
+      if (line.trim().length === 0) {
+        flushParagraph();
+      } else {
+        paragraph += `${paragraph ? '<br/>' : ''}${line}`;
+      }
+    }
+
+    flushParagraph();
+    flushList();
+    return html;
   }
 }
 
@@ -33,13 +105,14 @@ export class ChatView extends ItemView {
   private readonly plugin: EzRAGPlugin;
   private messages: ChatMessage[] = [];
   private isLoading = false;
-  private headerTitleEl!: HTMLElement;
-  private headerStatusEl!: HTMLElement;
+  private headerEl!: HTMLElement;
+  private statusEl!: HTMLElement;
   private historyEl!: HTMLElement;
-  private inputEl!: HTMLInputElement;
+  private inputContainer!: HTMLElement;
+  private inputEl!: HTMLTextAreaElement;
   private sendButton!: HTMLButtonElement;
   private model: ChatModel = 'gemini-2.5-flash';
-  private modelButtons: Partial<Record<ChatModel, HTMLButtonElement>> = {};
+  private modelSwitcher!: HTMLElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: EzRAGPlugin) {
     super(leaf);
@@ -51,7 +124,7 @@ export class ChatView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'EzRAG Chat';
+    return 'Chat';
   }
 
   getIcon(): string {
@@ -64,117 +137,132 @@ export class ChatView extends ItemView {
     this.renderMessages();
   }
 
-  async onClose(): Promise<void> {}
+  async onClose(): Promise<void> {
+    // Cleanup if needed
+  }
 
   private buildLayout(): void {
-    this.contentEl.empty();
-    this.contentEl.addClass('ezrag-chat-view');
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('ezrag-chat-view');
 
-    const header = this.contentEl.createDiv('ezrag-chat-header');
-    const titleWrapper = header.createDiv('ezrag-chat-header__titles');
-    this.headerTitleEl = titleWrapper.createEl('h2', { text: 'EzRAG Chat' });
-    this.headerStatusEl = titleWrapper.createEl('p', {
-      cls: 'ezrag-chat-header__status',
-      text: '',
+    // Header section with vault name and status
+    this.headerEl = contentEl.createDiv('ezrag-chat-header');
+    const titleEl = this.headerEl.createEl('div', { cls: 'ezrag-chat-title' });
+    this.statusEl = this.headerEl.createEl('div', { cls: 'ezrag-chat-status' });
+
+    // Action bar with model switcher and new chat
+    const actionBar = contentEl.createDiv('ezrag-chat-actions');
+
+    // Model switcher (compact for mobile)
+    this.modelSwitcher = actionBar.createDiv('ezrag-chat-model-switcher');
+    this.buildModelSwitcher();
+
+    // New chat button
+    const newChatBtn = actionBar.createEl('button', {
+      cls: 'clickable-icon',
+      attr: { 'aria-label': 'New chat' }
     });
+    setIcon(newChatBtn, 'file-plus');
+    newChatBtn.addEventListener('click', () => this.resetChat());
 
-    const controls = header.createDiv('ezrag-chat-header__controls');
+    // Messages area (scrollable)
+    this.historyEl = contentEl.createDiv('ezrag-chat-messages');
 
-    const modelToggle = controls.createDiv('ezrag-chat-model-toggle');
-    modelToggle.createEl('span', { text: 'Model' });
-    const flashButton = modelToggle.createEl('button', {
-      text: 'Gemini 2.5 Flash',
-      cls: 'ezrag-chat-model-button',
-    }) as HTMLButtonElement;
-    const proButton = modelToggle.createEl('button', {
-      text: 'Gemini 2.5 Pro',
-      cls: 'ezrag-chat-model-button',
-    }) as HTMLButtonElement;
-    this.modelButtons = {
-      'gemini-2.5-flash': flashButton,
-      'gemini-2.5-pro': proButton,
-    };
-    flashButton.addEventListener('click', () => this.setModel('gemini-2.5-flash'));
-    proButton.addEventListener('click', () => this.setModel('gemini-2.5-pro'));
+    // Input area (fixed at bottom)
+    this.inputContainer = contentEl.createDiv('ezrag-chat-input-container');
 
-    const newChatButton = controls.createEl('button', {
-      text: 'New chat',
-      cls: 'ezrag-chat-button',
-    });
-    newChatButton.addEventListener('click', () => {
-      this.resetChat();
-    });
-    this.updateModelButtons();
-
-    this.historyEl = this.contentEl.createDiv('ezrag-chat-history');
-
-    const footer = this.contentEl.createDiv('ezrag-chat-footer');
-    const inputRow = footer.createDiv('ezrag-chat-input-row');
-    this.inputEl = inputRow.createEl('input', {
-      type: 'text',
-      placeholder: 'Ask something about your notes…',
+    // Textarea for multi-line input
+    this.inputEl = this.inputContainer.createEl('textarea', {
       cls: 'ezrag-chat-input',
-    }) as HTMLInputElement;
-    this.inputEl.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
+      attr: {
+        placeholder: 'Ask about your notes...',
+        rows: '1'
+      }
+    }) as HTMLTextAreaElement;
+
+    // Auto-resize textarea as user types
+    this.inputEl.addEventListener('input', () => {
+      this.inputEl.style.height = 'auto';
+      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+    });
+
+    this.inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
         this.handleSubmit();
       }
     });
 
-    this.sendButton = inputRow.createEl('button', {
-      text: 'Send',
+    // Send button
+    this.sendButton = this.inputContainer.createEl('button', {
       cls: 'ezrag-chat-send',
-    }) as HTMLButtonElement;
+      attr: { 'aria-label': 'Send message' }
+    });
+    setIcon(this.sendButton, 'send');
     this.sendButton.addEventListener('click', () => this.handleSubmit());
+  }
+
+  private buildModelSwitcher(): void {
+    this.modelSwitcher.empty();
+
+    const label = this.modelSwitcher.createEl('span', {
+      cls: 'ezrag-model-label',
+      text: 'Model:'
+    });
+
+    const select = this.modelSwitcher.createEl('select', {
+      cls: 'dropdown'
+    }) as HTMLSelectElement;
+
+    const flashOption = select.createEl('option', {
+      value: 'gemini-2.5-flash',
+      text: 'Flash'
+    });
+
+    const proOption = select.createEl('option', {
+      value: 'gemini-2.5-pro',
+      text: 'Pro'
+    });
+
+    select.value = this.model;
+    select.addEventListener('change', () => {
+      this.model = select.value as ChatModel;
+    });
   }
 
   private getReadiness(): { ready: boolean; message?: string } {
     const settings = this.plugin.stateManager.getSettings();
     if (!settings.apiKey) {
-      return { ready: false, message: 'Add your Gemini API key in the EzRAG settings tab.' };
+      return {
+        ready: false,
+        message: 'Add your Gemini API key in settings to start chatting.'
+      };
     }
     if (!settings.storeName) {
       return {
         ready: false,
-        message: 'Your vault has not been indexed yet. Enable a desktop runner to build the index.',
+        message: 'Enable indexing on a desktop device to start chatting.',
       };
     }
     return { ready: true };
   }
 
-  private setModel(next: ChatModel): void {
-    if (this.model === next) return;
-    this.model = next;
-    this.updateModelButtons();
-  }
-
-  private updateModelButtons(): void {
-    (Object.keys(this.modelButtons) as ChatModel[]).forEach((key) => {
-      const button = this.modelButtons[key];
-      if (!button) return;
-      if (key === this.model) {
-        button.addClass('is-active');
-      } else {
-        button.removeClass('is-active');
-      }
-    });
-  }
-
   private updateHeader(): void {
     const settings = this.plugin.stateManager.getSettings();
-    const displayName = settings.storeDisplayName || this.app.vault.getName();
-    this.headerTitleEl.setText(`Chat with ${displayName}`);
+    const vaultName = settings.storeDisplayName || this.app.vault.getName();
+
+    this.headerEl.querySelector('.ezrag-chat-title')?.setText(`Chat with ${vaultName}`);
 
     const readiness = this.getReadiness();
     if (readiness.ready) {
-      this.headerStatusEl.setText('Connected to Gemini File Search');
-      this.contentEl.removeClass('ezrag-chat-view--disabled');
+      this.statusEl.setText('Connected');
+      this.statusEl.removeClass('is-disabled');
       this.inputEl.disabled = this.isLoading;
       this.sendButton.disabled = this.isLoading;
     } else {
-      this.headerStatusEl.setText(readiness.message ?? '');
-      this.contentEl.addClass('ezrag-chat-view--disabled');
+      this.statusEl.setText('Not configured');
+      this.statusEl.addClass('is-disabled');
       this.inputEl.disabled = true;
       this.sendButton.disabled = true;
     }
@@ -185,14 +273,19 @@ export class ChatView extends ItemView {
     const readiness = this.getReadiness();
 
     if (!readiness.ready) {
-      const empty = this.historyEl.createDiv({ cls: 'ezrag-chat-empty' });
-      empty.setText(readiness.message ?? 'Chat is not available yet.');
+      const emptyState = this.historyEl.createDiv('ezrag-empty-state');
+      const icon = emptyState.createDiv('ezrag-empty-icon');
+      setIcon(icon, 'message-square');
+      emptyState.createEl('p', { text: readiness.message });
       return;
     }
 
     if (this.messages.length === 0 && !this.isLoading) {
-      const empty = this.historyEl.createDiv({ cls: 'ezrag-chat-empty' });
-      empty.setText('Ask a question about any indexed note to get started.');
+      const emptyState = this.historyEl.createDiv('ezrag-empty-state');
+      const icon = emptyState.createDiv('ezrag-empty-icon');
+      setIcon(icon, 'sparkles');
+      emptyState.createEl('p', { text: 'Ask a question about your notes to get started.' });
+      return;
     }
 
     for (const message of this.messages) {
@@ -200,39 +293,47 @@ export class ChatView extends ItemView {
     }
 
     if (this.isLoading) {
-      const typing = this.historyEl.createDiv('ezrag-chat-bubble ezrag-chat-bubble--model');
-      typing.createDiv('ezrag-chat-spinner');
+      const loadingBubble = this.historyEl.createDiv('ezrag-message-row is-assistant');
+      const bubble = loadingBubble.createDiv('ezrag-message-bubble');
+      const spinner = bubble.createDiv('ezrag-loading');
+      spinner.createDiv('ezrag-loading-dot');
+      spinner.createDiv('ezrag-loading-dot');
+      spinner.createDiv('ezrag-loading-dot');
     }
 
+    // Scroll to bottom
     this.historyEl.scrollTop = this.historyEl.scrollHeight;
   }
 
   private renderMessageBubble(message: ChatMessage): HTMLElement {
-    const bubble = document.createElement('div');
-    bubble.addClass('ezrag-chat-bubble');
-    bubble.addClass(message.role === 'user' ? 'ezrag-chat-bubble--user' : 'ezrag-chat-bubble--model');
+    const row = document.createElement('div');
+    row.addClass('ezrag-message-row');
+    row.addClass(message.role === 'user' ? 'is-user' : 'is-assistant');
 
-    const body = bubble.createDiv('ezrag-chat-message');
-    body.innerHTML = this.renderMarkdown(message.text);
+    const bubble = row.createDiv('ezrag-message-bubble');
+    const content = bubble.createDiv('ezrag-message-content');
+    content.innerHTML = this.renderMarkdown(message.text);
 
+    // Sources (for assistant messages only)
     if (message.role === 'model' && message.groundingChunks && message.groundingChunks.length > 0) {
-      const footer = bubble.createDiv('ezrag-chat-sources');
-      footer.createEl('span', { text: 'Sources:' });
+      const sources = bubble.createDiv('ezrag-message-sources');
+
       message.groundingChunks.forEach((chunk: GroundingChunk, index: number) => {
         const text = chunk?.retrievedContext?.text;
         if (!text) return;
-        const btn = footer.createEl('button', {
-          text: `Source ${index + 1}`,
-          cls: 'ezrag-chat-source-button',
+
+        const sourceBtn = sources.createEl('button', {
+          cls: 'ezrag-source-chip',
+          text: `${index + 1}`
         });
-        btn.addEventListener('click', () => {
-          const html = this.renderMarkdown(text);
-          new SourceModal(this.app, html).open();
+
+        sourceBtn.addEventListener('click', () => {
+          new SourceModal(this.app, { text, index: index + 1 }).open();
         });
       });
     }
 
-    return bubble;
+    return row;
   }
 
   private renderMarkdown(text: string): string {
@@ -311,6 +412,7 @@ export class ChatView extends ItemView {
       return;
     }
     this.inputEl.value = '';
+    this.inputEl.style.height = 'auto';
     void this.sendMessage(value);
   }
 
@@ -360,5 +462,4 @@ export class ChatView extends ItemView {
     this.renderMessages();
     this.updateHeader();
   }
-
 }

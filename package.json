@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-sample-plugin",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Turns your Obsidian (https://obsidian.md) vault into a Gemini-powered RAG index.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

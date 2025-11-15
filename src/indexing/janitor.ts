@@ -1,28 +1,39 @@
-// src/indexing/janitor.ts - Deduplication and sync conflict resolution
+// src/indexing/janitor.ts - Remote index cleanup: remove documents that don't match local state
 
 import { GeminiService, CustomMetadataEntry } from '../gemini/geminiService';
 import { StateManager } from '../state/state';
 
 export interface JanitorStats {
   totalRemoteDocs: number;
-  duplicatesFound: number;
-  duplicatesDeleted: number;
-  stateUpdated: number;
-  orphansDeleted: number;
+  totalRemoved: number;
 }
 
 export interface JanitorOptions {
   geminiService: GeminiService;
   stateManager: StateManager;
   storeName: string;
-  onProgress?: (message: string) => void;
+  onProgress?: (update: JanitorProgressUpdate) => void;
+}
+
+export type JanitorPhase =
+  | 'fetching'
+  | 'analyzing'
+  | 'deleting-duplicates'
+  | 'deleting-orphans'
+  | 'complete';
+
+export interface JanitorProgressUpdate {
+  phase: JanitorPhase;
+  message: string;
+  current?: number;
+  total?: number;
 }
 
 export class Janitor {
   private gemini: GeminiService;
   private state: StateManager;
   private storeName: string;
-  private onProgress?: (message: string) => void;
+  private onProgress?: (update: JanitorProgressUpdate) => void;
 
   constructor(options: JanitorOptions) {
     this.gemini = options.geminiService;
@@ -38,7 +49,7 @@ export class Janitor {
    * Should ONLY be used for debugging or one-off operations, NEVER in hot path.
    * For bulk operations, use runDeduplication() instead which lists once and caches.
    *
-   * @deprecated - Removed from hot path. Use manual deduplication instead.
+   * @deprecated - Removed from hot path. Use manual cleanup instead.
    */
   async findExistingDocument(pathHash: string): Promise<string | null> {
     try {
@@ -60,35 +71,62 @@ export class Janitor {
   }
 
   /**
-   * Manual deduplication: Find and remove duplicate documents
+   * Clean up remote index: Find and remove documents that don't match local state
    *
    * This is run manually by the user via settings UI.
-   * It finds all documents with the same pathHash and keeps only the newest one.
+   * Uses local state as source of truth - deletes duplicates, orphans, and stale documents.
    */
-  async runDeduplication(): Promise<JanitorStats> {
+  async runDeduplication(onProgress?: (update: JanitorProgressUpdate) => void): Promise<JanitorStats> {
     const stats: JanitorStats = {
       totalRemoteDocs: 0,
-      duplicatesFound: 0,
-      duplicatesDeleted: 0,
-      stateUpdated: 0,
-      orphansDeleted: 0,
+      totalRemoved: 0,
     };
 
-    this.log('Starting deduplication...');
+    this.reportProgress({
+      phase: 'fetching',
+      message: 'Preparing cleanup…',
+      current: 0,
+    }, onProgress);
 
-    // Fetch all documents from Gemini
-    this.log('Fetching all documents from Gemini...');
-    const allDocs = await this.gemini.listDocuments(this.storeName);
+    let documentCount: number | undefined;
+    try {
+      const store = await this.gemini.getStore(this.storeName);
+      documentCount = (store?.documentCount ?? store?.stats?.documentCount) as number | undefined;
+    } catch (err) {
+      console.warn('[Janitor] Unable to determine document count', err);
+    }
+    const expectedPages = documentCount ? Math.max(1, Math.ceil(documentCount / 20)) : undefined;
+
+    // Fetch all documents from Gemini with page progress
+    let fetchedPages = 0;
+    const allDocs = await this.gemini.listDocuments(this.storeName, {
+      onPage: ({ pageIndex, docs }) => {
+        fetchedPages = pageIndex + 1;
+        const message = expectedPages
+          ? `Reading remote documents (${fetchedPages}/${expectedPages})`
+          : `Reading remote documents (page ${fetchedPages})`;
+        this.reportProgress(
+          {
+            phase: 'fetching',
+            message,
+            current: fetchedPages,
+            total: expectedPages,
+          },
+          onProgress
+        );
+      },
+    });
     stats.totalRemoteDocs = allDocs.length;
-    this.log(`Found ${allDocs.length} documents`);
 
     // Build map: pathHash -> Document[]
     const docsByPathHash = new Map<string, any[]>();
+    const noPathHashDocs: any[] = [];
 
     for (const doc of allDocs) {
       const pathHash = this.getMetadataValue(doc.customMetadata, 'obsidian_path_hash');
       if (!pathHash) {
-        // Not our document (no obsidian_path_hash metadata)
+        // No path hash means we can't reconcile - definitely orphan
+        noPathHashDocs.push(doc);
         continue;
       }
 
@@ -98,71 +136,87 @@ export class Janitor {
       docsByPathHash.get(pathHash)!.push(doc);
     }
 
+    // Collect documents to delete, using local state as source of truth
+    const toDelete: any[] = [];
+    let processedGroups = 0;
+    const totalGroups = docsByPathHash.size;
+
     // Process each pathHash group
     for (const [pathHash, docs] of docsByPathHash) {
-      if (docs.length === 1) {
-        // No duplicates, verify local state matches
-        const doc = docs[0];
-        const vaultPath = this.getMetadataValue(doc.customMetadata, 'obsidian_path');
-        const localState = this.state.getDocState(vaultPath);
+      processedGroups++;
 
-        // Update local state if it points to a different document
-        if (!localState || localState.geminiDocumentName !== doc.name) {
-          this.state.setDocState(vaultPath, {
-            vaultPath,
-            geminiDocumentName: doc.name,
-            contentHash: '', // Will be updated on next change
-            pathHash,
-            status: 'ready',
-            lastLocalMtime: this.getMetadataValue(doc.customMetadata, 'obsidian_mtime', 'number') || 0,
-            lastIndexedAt: Date.now(),
-            tags: [],
-          });
-          stats.stateUpdated++;
+      // Get vault path from first doc (all docs in group should have same path)
+      const vaultPath = this.getMetadataValue(docs[0].customMetadata, 'obsidian_path');
+      const localState = vaultPath ? this.state.getDocState(vaultPath) : undefined;
+
+      if (localState && localState.pathHash === pathHash) {
+        // Local state exists for this path - find the doc that matches
+        const validDoc = docs.find(d => d.name === localState.geminiDocumentName);
+
+        if (validDoc) {
+          // This doc matches local state - all others are stale
+          const staleOnes = docs.filter(d => d.name !== validDoc.name);
+          toDelete.push(...staleOnes);
+        } else {
+          // Local state exists but doesn't match any doc - all are stale
+          toDelete.push(...docs);
         }
       } else {
-        // DUPLICATES FOUND!
-        stats.duplicatesFound++;
-        this.log(`Found ${docs.length} duplicates for pathHash ${pathHash.substring(0, 8)}...`);
+        // No local state or pathHash mismatch - all are stale
+        toDelete.push(...docs);
+      }
 
-        // Sort by mtime (descending) - keep newest
-        docs.sort((a, b) => {
-          const aTime = this.getMetadataValue(a.customMetadata, 'obsidian_mtime', 'number') || 0;
-          const bTime = this.getMetadataValue(b.customMetadata, 'obsidian_mtime', 'number') || 0;
-          return bTime - aTime;
-        });
-
-        const winner = docs[0];
-        const losers = docs.slice(1);
-
-        // Delete losers
-        for (const loser of losers) {
-          try {
-            await this.gemini.deleteDocument(loser.name);
-            stats.duplicatesDeleted++;
-            this.log(`Deleted duplicate: ${loser.name}`);
-          } catch (err) {
-            console.error('[Janitor] Failed to delete duplicate:', err);
-          }
-        }
-
-        // Update local state to point to winner
-        const vaultPath = this.getMetadataValue(winner.customMetadata, 'obsidian_path');
-        this.state.setDocState(vaultPath, {
-          vaultPath,
-          geminiDocumentName: winner.name,
-          contentHash: '', // Will be updated on next change
-          pathHash,
-          status: 'ready',
-          lastLocalMtime: this.getMetadataValue(winner.customMetadata, 'obsidian_mtime', 'number') || 0,
-          lastIndexedAt: Date.now(),
-          tags: [],
-        });
-        stats.stateUpdated++;
+      // Progress update every 25 groups or at the end
+      if (processedGroups % 25 === 0 || processedGroups === totalGroups) {
+        this.reportProgress(
+          {
+            phase: 'analyzing',
+            message: `Analyzing remote metadata (${processedGroups}/${totalGroups} groups)`,
+            current: processedGroups,
+            total: totalGroups,
+          },
+          onProgress
+        );
       }
     }
 
-    this.log(`Deduplication complete: ${stats.duplicatesDeleted} duplicates deleted, ${stats.stateUpdated} state updates`);
+    // Add docs without pathHash to stale list
+    toDelete.push(...noPathHashDocs);
+
+    // Delete all stale documents with progress
+    if (toDelete.length > 0) {
+      let completed = 0;
+      for (const doc of toDelete) {
+        completed++;
+        this.reportProgress(
+          {
+            phase: 'deleting-duplicates',
+            message: `Removing stale documents (${completed}/${toDelete.length})`,
+            current: completed,
+            total: toDelete.length,
+          },
+          onProgress
+        );
+
+        try {
+          await this.gemini.deleteDocument(doc.name);
+          stats.totalRemoved++;
+        } catch (err) {
+          console.error('[Janitor] Failed to delete stale document:', err);
+        }
+      }
+    }
+
+    this.reportProgress(
+      {
+        phase: 'complete',
+        message: 'Cleanup complete',
+        current: 1,
+        total: 1,
+      },
+      onProgress
+    );
+
     return stats;
   }
 
@@ -182,9 +236,8 @@ export class Janitor {
     }
   }
 
-  private log(message: string): void {
-    if (this.onProgress) {
-      this.onProgress(message);
-    }
+  private reportProgress(update: JanitorProgressUpdate, override?: (update: JanitorProgressUpdate) => void): void {
+    override?.(update);
+    this.onProgress?.(update);
   }
 }

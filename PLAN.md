@@ -144,22 +144,25 @@ User clicks "Run Deduplication" in settings → Runner check: isRunner()?
                           ↓ YES (runner machine)
                     Open JanitorProgressModal
                           ↓
-                    List ALL documents from Gemini (with pagination)
+                    List ALL documents from Gemini (with pagination progress)
                           ↓
                     Build Map<PathHash, Doc[]> in memory
                           ↓
                     For each pathHash group:
-                      - 1 doc: Verify local state matches
-                      - 2+ docs: DUPLICATE DETECTED
-                          ↓ Sort by mtime (descending)
-                          ↓ Keep newest
-                          ↓ Delete older duplicates
-                          ↓ Update local state to point to winner
-                          ↓ Update progress modal
+                      - Check local state for this path
+                      - If local state exists AND matches one doc's geminiDocumentName:
+                          → Keep that doc (valid)
+                          → Delete all others (duplicates)
+                      - If local state doesn't exist OR doesn't match any doc:
+                          → Delete ALL docs in group (orphans)
                           ↓
-                    Save state if any changes
+                    Docs without pathHash → orphans (delete all)
                           ↓
-                    Show completion notice
+                    Delete duplicates with progress (phase: deleting-duplicates)
+                          ↓
+                    Delete orphans with progress (phase: deleting-orphans)
+                          ↓
+                    Show completion notice (phase: complete)
                           ↓ NO (not runner)
                     Show error: "Not configured as runner"
 ```
@@ -232,8 +235,9 @@ When uploading a document, we attach metadata with the following structure:
 - `obsidian_vault` - Vault name
 - `obsidian_path` - Full vault path
 - `obsidian_path_hash` - Hash of path (stable ID)
-- `tag` - Tags from frontmatter (multiple entries allowed)
+- `obsidian_content_hash` - Hash of content (for smart reconciliation)
 - `obsidian_mtime` - Last modified time
+- `tag` - Tags from frontmatter (multiple entries allowed)
 
 **Example metadata structure:** See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method for how metadata is built and attached to documents.
 
@@ -343,12 +347,12 @@ Orchestrates all indexing operations.
 **File:** [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts)
 
 **Implementation:** See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) for the complete `IndexManager` class, including:
-- `reconcileOnStartup()` - Scan all files and queue changed ones
+- `reconcileOnStartup(syncWithRemote)` - Scan all files and queue changed ones; optionally sync with remote for smart reconciliation
 - `onFileCreated()` - Handle file creation events
 - `onFileModified()` - Handle file modification with hash-based change detection
 - `onFileRenamed()` - Handle file rename (delete old, index new)
 - `onFileDeleted()` - Handle file deletion
-- `rebuildIndex()` - Manual rebuild (clear state and reindex)
+- `rebuildIndex()` - Manual rebuild with smart reconciliation (avoids re-uploading unchanged files)
 - `cleanupOrphans()` - Remove documents that exist in Gemini but not in vault
 - `queueIndexJob()` - Queue with retry logic (exponential backoff)
 - `indexFile()` - Core indexing logic (uses local state only, no remote checks)
@@ -356,6 +360,37 @@ Orchestrates all indexing operations.
 - `pause()` / `resume()` / `clearQueue()` - Queue control methods
 - `waitForIdle()` - Wait for all queued jobs to complete
 - `dispose()` - Cleanup resources
+
+#### Smart Reconciliation for Rebuild Index
+
+**Problem**: When users run "Rebuild Index" (e.g., after sync issues or corrupted local state), naively re-indexing would create duplicates in Gemini for every file.
+
+**Solution**: Smart reconciliation compares local files with remote documents using content hashes.
+
+**How it works**:
+
+1. User clicks "Rebuild Index"
+2. Local state is cleared (`clearIndex()`)
+3. `reconcileOnStartup(syncWithRemote: true)` is called:
+   - Fetches all remote documents from Gemini
+   - Builds map of `pathHash` → remote document
+   - For each local file:
+     - Computes `contentHash` and `pathHash`
+     - Checks if remote has matching document by `pathHash`
+     - If match and `obsidian_content_hash` equals local hash:
+       - **Restore local state** without re-uploading ✅
+     - If match but hash differs:
+       - **Queue for re-index** (content changed)
+     - If no match:
+       - **Queue for upload** (new file)
+
+**Benefits**:
+- ✅ No duplicates created
+- ✅ Unchanged files restored instantly (no re-upload)
+- ✅ Only changed files re-indexed
+- ✅ Perfect for recovering from sync issues or corrupted local state
+
+**Implementation**: See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) lines 78-163 for the complete smart reconciliation logic.
 
 ### 6.4.1 Indexing Controller ([`indexingController.ts`](src/indexing/indexingController.ts))
 
@@ -573,40 +608,47 @@ The IndexingStatusModal is opened on-demand from settings, providing better UX t
 
 ### 6.12 Janitor Pattern for Deduplication
 
-**Problem:** Multi-device sync can cause duplicate documents when local `data.json` state is stale.
+**Problem:** Multi-device sync or interrupted operations can cause stale or duplicate documents in Gemini that don't match the runner's current local state.
 
-**Scenario:**
-1. User modifies `NoteA.md` on Laptop
-2. Laptop's `data.json` is stale (no ID found for this file)
-3. Laptop uploads a new document → creates `doc-123`
-4. Desktop (also with stale `data.json`) does the same → creates `doc-456`
-5. Result: Two remote documents for the same note
-
-**Solution:** Background "Janitor" job that periodically deduplicates.
+**Key Principle:** The runner's local state is the single source of truth. Any Gemini document that doesn't match local state should be deleted, whether it's a duplicate or orphan.
 
 #### Janitor Implementation
 
 **File:** [`src/indexing/janitor.ts`](src/indexing/janitor.ts)
 
-**Implementation:** See [`src/indexing/janitor.ts`](src/indexing/janitor.ts) for the complete `Janitor` class, including:
-- `run()` - Full deduplication and orphan cleanup (with pagination handling)
+**Core Algorithm:**
+1. Fetch all documents from Gemini (with pagination progress tracking)
+2. Group documents by `obsidian_path_hash`
+3. For each pathHash group:
+   - Check if local state exists for this path
+   - If local state exists and `geminiDocumentName` matches one of the docs → that doc is valid, all others are duplicates
+   - If local state doesn't exist or doesn't match any doc → all docs are orphans
+4. Delete all invalid documents (duplicates + orphans)
+
+**Document Categories:**
+- **Duplicates**: Multiple docs share the same pathHash, but only one matches `localState.geminiDocumentName`
+- **Orphans**: Docs for paths with no local state, or local state that doesn't match any doc
+- **No pathHash**: Docs without `obsidian_path_hash` metadata (definitely orphans)
+
+**Implementation details:** See [`src/indexing/janitor.ts`](src/indexing/janitor.ts) for:
+- `runDeduplication()` - Full cleanup with progress callbacks
 - `findExistingDocument()` - Check if document exists by pathHash (cold path, rare)
-- Duplicate detection by pathHash grouping
-- Winner selection by mtime (newest wins)
-- State synchronization after deduplication
+- Phase-based progress reporting (fetching → analyzing → deleting-duplicates → deleting-orphans → complete)
+- Per-document deletion with real-time progress updates
 
 #### When to Run the Janitor
 
 **Manual trigger only** (via settings button with dedicated progress UI)
 - User explicitly runs deduplication when needed
-- Shows real-time progress in dedicated modal
-- Only available on the designated "runner" machine (see Section 6.5)
+- Shows real-time progress in `JanitorProgressModal`
+- Only available on the designated "runner" machine
+- Typically run after multi-device sync issues or interrupted operations
 
 #### Integration with IndexManager
 
 The `IndexManager` does NOT check for existing documents during normal indexing (hot path) - it uses local state only. This prevents expensive `listDocuments()` calls during bulk operations.
 
-Edge case duplicates (e.g., stale local state after multi-device sync) are handled by manual Janitor deduplication runs. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method.
+Stale documents created from sync edge cases are cleaned up by manual Janitor runs. The next indexing cycle will re-upload any missing documents based on current local state. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method.
 
 ---
 
@@ -901,6 +943,22 @@ Don't overstuff [`main.ts`](main.ts)—give chat its own module in `ui/chatView.
 - Removes from local state
 
 This prevents API errors and keeps state consistent.
+
+### 8.15 Smart Reconciliation Prevents Duplicates
+
+**Problem:** Running "Rebuild Index" would previously create duplicates because it cleared local state and re-uploaded everything.
+
+**Solution:** Smart reconciliation compares local files with remote documents using `obsidian_content_hash` metadata:
+- Fetches all remote documents when `syncWithRemote: true`
+- Matches local files to remote docs by `pathHash`
+- Restores local state for unchanged files (no re-upload)
+- Only re-indexes files with changed content
+
+**Performance**: For a 1000-file vault where only 10 files changed:
+- **Without smart reconciliation**: 1000 uploads (duplicates everything)
+- **With smart reconciliation**: 10 uploads (only changed files)
+
+This makes "Rebuild Index" safe and efficient for recovering from sync issues.
 
 ---
 
