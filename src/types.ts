@@ -53,3 +53,18 @@ export const DEFAULT_DATA: PersistedData = {
   settings: DEFAULT_SETTINGS,
   index: { docs: {} },
 };
+
+export interface GroundingChunk {
+  retrievedContext?: {
+    text?: string;
+  };
+  [key: string]: any;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  groundingChunks?: GroundingChunk[];
+}
+
+export type ChatModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';

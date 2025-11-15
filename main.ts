@@ -10,6 +10,7 @@ import { JanitorProgressModal } from './src/ui/janitorProgressModal';
 import { EzRAGSettingTab } from './src/ui/settingsTab';
 import { IndexingStatusModal } from './src/ui/indexingStatusModal';
 import { StoreManager } from './src/store/storeManager';
+import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
@@ -43,6 +44,8 @@ export default class EzRAGPlugin extends Plugin {
     }
 
     this.storeManager = new StoreManager(this);
+
+    this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
 
     this.indexingController = new IndexingController({
       app: this.app,
@@ -134,11 +137,20 @@ export default class EzRAGPlugin extends Plugin {
         return true;
       },
     });
+
+    this.addCommand({
+      id: 'open-ezrag-chat',
+      name: 'Open Chat Interface',
+      callback: () => {
+        void this.openChatInterface();
+      }
+    });
   }
 
   onunload() {
     console.log('Unloading EzRAG plugin');
     this.indexingController?.dispose();
+    this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
 
   // New helper methods will be defined later
@@ -148,6 +160,23 @@ export default class EzRAGPlugin extends Plugin {
    */
   async saveState(): Promise<void> {
     await this.saveData(this.stateManager.exportData());
+  }
+
+  /**
+   * Ensure we have a GeminiService instance whenever an API key is configured.
+   * This is used by the chat interface and store utilities, even on non-runner devices.
+   */
+  getGeminiService(): GeminiService | null {
+    const apiKey = this.stateManager.getSettings().apiKey;
+    if (!apiKey) {
+      return null;
+    }
+
+    if (!this.geminiService) {
+      this.geminiService = new GeminiService(apiKey);
+    }
+
+    return this.geminiService;
   }
 
   async updateApiKey(value: string): Promise<string> {
@@ -196,6 +225,19 @@ export default class EzRAGPlugin extends Plugin {
     new IndexingStatusModal(this.app, this.indexingController).open();
   }
 
+  async openChatInterface(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+
+    const rightLeaf = this.app.workspace.getRightLeaf(false);
+    const leaf = rightLeaf ?? this.app.workspace.getLeaf(true);
+    await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
   private async refreshIndexingState(_source: string): Promise<string> {
     if (!Platform.isDesktopApp || !this.runnerManager) {
       this.indexingController?.stop();
@@ -237,12 +279,9 @@ export default class EzRAGPlugin extends Plugin {
   private async ensureGeminiResources(): Promise<boolean> {
     const settings = this.stateManager.getSettings();
 
-    if (!settings.apiKey) {
+    const service = this.getGeminiService();
+    if (!service) {
       return false;
-    }
-
-    if (!this.geminiService) {
-      this.geminiService = new GeminiService(settings.apiKey);
     }
 
     if (!settings.storeName) {
@@ -250,7 +289,7 @@ export default class EzRAGPlugin extends Plugin {
       const displayName = `ezrag-${vaultName}`;
 
       try {
-        const storeName = await this.geminiService.getOrCreateStore(displayName);
+        const storeName = await service.getOrCreateStore(displayName);
         this.stateManager.updateSettings({
           storeName,
           storeDisplayName: displayName

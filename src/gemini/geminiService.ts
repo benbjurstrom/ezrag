@@ -1,7 +1,7 @@
 // src/gemini/geminiService.ts - Gemini API wrapper (Obsidian-agnostic)
 
 import { GoogleGenAI } from '@google/genai';
-import { ChunkingConfig } from '../types';
+import { ChunkingConfig, ChatModel } from '../types';
 
 export interface CustomMetadataEntry {
   key: string;
@@ -176,9 +176,9 @@ export class GeminiService {
   /**
    * Query the FileSearchStore
    */
-  async fileSearch(storeName: string, query: string): Promise<FileSearchResult> {
+  async fileSearch(storeName: string, query: string, model: ChatModel = 'gemini-2.5-flash'): Promise<FileSearchResult> {
     const response = await this.ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model,
       contents: query,
       config: {
         tools: [

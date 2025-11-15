@@ -88,6 +88,19 @@ export class EzRAGSettingTab extends PluginSettingTab {
         });
       });
 
+    containerEl.createEl('hr');
+    containerEl.createEl('h3', { text: 'Chat Interface' });
+
+    new Setting(containerEl)
+      .setName('Chat with your notes')
+      .setDesc('Open the EzRAG chat panel to query your indexed vault.')
+      .addButton(button => button
+        .setButtonText('Open chat')
+        .onClick(() => {
+          void this.plugin.openChatInterface();
+        })
+      );
+
     // INDEXING CONTROLS (Desktop Runner Only)
     if (isRunner) {
       containerEl.createEl('hr');

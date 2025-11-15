@@ -8,17 +8,12 @@ export class StoreManager {
   constructor(private plugin: EzRAGPlugin) {}
 
   private getOrCreateGeminiService(): GeminiService | null {
-    if (this.plugin.geminiService) {
-      return this.plugin.geminiService;
-    }
-
-    const apiKey = this.plugin.stateManager.getSettings().apiKey;
-    if (!apiKey) {
+    const service = this.plugin.getGeminiService();
+    if (!service) {
       new Notice('Please configure your API key first');
       return null;
     }
-
-    return new GeminiService(apiKey);
+    return service;
   }
 
   async showStoreStats(): Promise<void> {
