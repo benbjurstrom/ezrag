@@ -1,21 +1,31 @@
 // src/ui/settingsTab.ts - Settings UI
 
-import { App, Platform, PluginSettingTab, Setting, Notice } from 'obsidian';
+import { App, Platform, PluginSettingTab, Setting, Notice, setIcon } from 'obsidian';
 import type EzRAGPlugin from '../../main';
+
+interface StoreTableData {
+  name: string;
+  displayName: string;
+  createTime: string;
+  updateTime: string;
+  activeDocumentsCount: number;
+  pendingDocumentsCount: number;
+  failedDocumentsCount: number;
+  sizeBytes: number;
+}
 
 export class EzRAGSettingTab extends PluginSettingTab {
   plugin: EzRAGPlugin;
+  private storeTableContainer: HTMLElement | null = null;
 
   constructor(app: App, plugin: EzRAGPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
-  display(): void {
+  async display(): Promise<void> {
     const { containerEl } = this;
     containerEl.empty();
-
-    containerEl.createEl('h2', { text: 'EzRAG Settings' });
 
     // Determine if we're on desktop and if this is the runner
     const isDesktop = Platform.isDesktopApp;
@@ -23,90 +33,54 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     if (!isDesktop) {
       // Mobile platform - show info message
-      containerEl.createEl('h3', { text: 'Mobile Platform' });
+      new Setting(containerEl).setName('Mobile Platform').setHeading();
       containerEl.createDiv({
         cls: 'setting-item-description',
         text: 'Indexing is not available on mobile devices. The runner can only be enabled on desktop. ' +
               'You can still configure your API key and use chat/query features once they are implemented.'
       });
-      containerEl.createEl('hr');
     }
 
     // API Key Section (ALWAYS VISIBLE ON ALL PLATFORMS)
-    containerEl.createEl('h3', { text: 'API Configuration' });
+    new Setting(containerEl).setName('API Configuration').setHeading();
 
     new Setting(containerEl)
       .setName('Gemini API Key')
       .setDesc('Your Google Gemini API key (get it from ai.google.dev)')
-      .addText(text => {
-        text
-          .setPlaceholder('Enter your API key')
-          .setValue(this.plugin.stateManager.getSettings().apiKey);
-
-        text.inputEl.addEventListener('change', async () => {
-          const message = await this.plugin.updateApiKey(text.getValue());
+      .addText(text => text
+        .setPlaceholder('Enter your API key')
+        .setValue(this.plugin.stateManager.getSettings().apiKey)
+        .onChange(async (value) => {
+          const message = await this.plugin.updateApiKey(value);
           if (message) {
             new Notice(message);
           }
-        });
-      });
-
-    containerEl.createEl('hr');
-    containerEl.createEl('h3', { text: 'Chat Interface' });
-
-    new Setting(containerEl)
-      .setName('Chat with your notes')
-      .setDesc('Open the EzRAG chat panel to query your indexed vault.')
-      .addButton(button => button
-        .setButtonText('Open chat')
-        .onClick(() => {
-          void this.plugin.openChatInterface();
         })
       );
 
     // Store Management Section (Read-only operations visible on all platforms)
-    containerEl.createEl('hr');
-    containerEl.createEl('h3', { text: 'Store Management' });
-
-    // Current Store Stats (available on all platforms if API key is set)
     new Setting(containerEl)
-      .setName('Current Store Stats')
-      .setDesc('View statistics for the current vault\'s FileSearchStore')
-      .addButton(button => button
-        .setButtonText('View Stats')
+      .setName('Gemini FileStores')
+      .setDesc('FileSearchStores associated with this API key')
+      .setHeading()
+      .addExtraButton(button => button
+        .setIcon('refresh-cw')
+        .setTooltip('Refresh store list')
         .onClick(async () => {
-          await this.plugin.storeManager?.showStoreStats();
+          await this.refreshStoreTable();
         })
       );
 
-    // List All Stores (available on all platforms if API key is set)
-    new Setting(containerEl)
-      .setName('List All Stores')
-      .setDesc('View all FileSearchStores associated with this API key')
-      .addButton(button => button
-        .setButtonText('List Stores')
-        .onClick(async () => {
-          await this.plugin.storeManager?.listAllStores();
-        })
-      );
+    // Container for the store table (will be populated by renderStoreTable)
+    const storeTableContainer = containerEl.createDiv({ cls: 'ezrag-store-table-container' });
+    this.storeTableContainer = storeTableContainer;
 
-    // Delete Current Store (runner only - destructive operation)
-    if (isRunner) {
-      new Setting(containerEl)
-        .setName('Delete Current Store')
-        .setDesc('Permanently delete the FileSearchStore for this vault (cannot be undone!)')
-        .addButton(button => button
-          .setButtonText('Delete Store')
-          .setWarning()
-          .onClick(async () => {
-            await this.plugin.storeManager?.deleteCurrentStore();
-          })
-        );
-    }
+    // Initial table render
+    await this.renderStoreTable();
 
     // Index Status Display (runner only - only relevant for indexing)
     if (isRunner) {
-      containerEl.createEl('h3', { text: 'Index Status' });
+      new Setting(containerEl).setName('Index Status').setHeading();
 
       const stats = this.plugin.getIndexStats();
       const statusEl = containerEl.createDiv({ cls: 'ezrag-status' });
@@ -128,10 +102,10 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     // Runner Configuration Toggle (Desktop only, placed after general settings)
     if (isDesktop && this.plugin.runnerManager) {
-      containerEl.createEl('hr');
-      containerEl.createEl('h3', { text: 'Runner Configuration' });
+      new Setting(containerEl).setName('Runner Configuration').setHeading();
 
-      const runnerState = this.plugin.runnerManager.getState();
+      const runnerManager = this.plugin.runnerManager;
+      const runnerState = runnerManager.getState();
 
       new Setting(containerEl)
         .setName('This machine is the runner')
@@ -142,7 +116,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
         .addToggle(toggle => toggle
           .setValue(runnerState.isRunner)
           .onChange(async (value) => {
-            await this.plugin.runnerManager!.setRunner(value);
+            await runnerManager.setRunner(value);
             const message = await this.plugin.handleRunnerStateChange();
 
             this.display();
@@ -163,8 +137,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     // INDEXING CONTROLS (runner only, below toggle)
     if (isRunner) {
-      containerEl.createEl('hr');
-      containerEl.createEl('h3', { text: 'Indexing Configuration' });
+      new Setting(containerEl).setName('Indexing Configuration').setHeading();
 
       // Included Folders
       new Setting(containerEl)
@@ -195,7 +168,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
         );
 
       // Chunking Configuration Section
-      containerEl.createEl('h3', { text: 'Chunking Strategy' });
+      new Setting(containerEl).setName('Chunking Strategy').setHeading();
 
       new Setting(containerEl)
         .setName('Max Tokens Per Chunk')
@@ -230,7 +203,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
         );
 
       // Manual Actions Section
-      containerEl.createEl('h3', { text: 'Manual Actions' });
+      new Setting(containerEl).setName('Manual Actions').setHeading();
 
       // Rebuild Index
       new Setting(containerEl)
@@ -254,5 +227,223 @@ export class EzRAGSettingTab extends PluginSettingTab {
           })
         );
     }
+  }
+
+  // ========== Store Table Helper Methods ==========
+
+  /**
+   * Fetch store data from Gemini API
+   */
+  private async fetchStoreData(): Promise<StoreTableData[]> {
+    const service = this.plugin.storeManager?.['getOrCreateGeminiService']();
+    if (!service) {
+      return [];
+    }
+
+    try {
+      const stores = await service.listStores();
+      return stores as StoreTableData[];
+    } catch (err) {
+      console.error('[EzRAG] Failed to fetch stores:', err);
+      new Notice('Failed to load stores. See console for details.');
+      return [];
+    }
+  }
+
+  /**
+   * Render the store table
+   */
+  private async renderStoreTable(): Promise<void> {
+    if (!this.storeTableContainer) return;
+
+    // Clear existing content
+    this.storeTableContainer.empty();
+
+    // Fetch store data
+    const stores = await this.fetchStoreData();
+    const currentStoreId = this.plugin.stateManager.getSettings().storeName;
+
+    if (stores.length === 0) {
+      this.storeTableContainer.createEl('p', {
+        text: 'No stores found. Upload a document to create your first store.',
+        cls: 'setting-item-description'
+      });
+      return;
+    }
+
+    // Create table
+    const table = this.storeTableContainer.createEl('table', { cls: 'ezrag-store-table' });
+
+    // Table header
+    const thead = table.createEl('thead');
+    const headerRow = thead.createEl('tr');
+    headerRow.createEl('th', { text: 'Display Name' });
+    headerRow.createEl('th', { text: 'Active' });
+    headerRow.createEl('th', { text: 'Pending' });
+    headerRow.createEl('th', { text: 'Failed' });
+    headerRow.createEl('th', { text: 'Size' });
+    headerRow.createEl('th', { text: 'Actions' });
+
+    // Table body
+    const tbody = table.createEl('tbody');
+    stores.forEach(store => {
+      const row = tbody.createEl('tr');
+      const isCurrent = store.name === currentStoreId;
+
+      // Display Name
+      row.createEl('td', { text: store.displayName });
+
+      // Active count
+      row.createEl('td', { text: String(store.activeDocumentsCount || 0) });
+
+      // Pending count
+      row.createEl('td', { text: String(store.pendingDocumentsCount || 0) });
+
+      // Failed count
+      row.createEl('td', { text: String(store.failedDocumentsCount || 0) });
+
+      // Size
+      row.createEl('td', { text: this.formatBytes(store.sizeBytes || 0) });
+
+      // Actions cell
+      const actionsCell = row.createEl('td', { cls: 'ezrag-store-actions' });
+
+      // Current store indicator/toggle
+      const starBtn = actionsCell.createEl('button', {
+        cls: 'clickable-icon',
+        attr: { 'aria-label': isCurrent ? 'Current store' : 'Set as current store' }
+      });
+      setIcon(starBtn, isCurrent ? 'star' : 'star-off');
+      starBtn.addEventListener('click', async () => {
+        if (!isCurrent) {
+          await this.handleSetCurrentStore(store.name, store.displayName);
+        }
+      });
+
+      // Delete button
+      const deleteBtn = actionsCell.createEl('button', {
+        cls: 'clickable-icon',
+        attr: { 'aria-label': 'Delete store' }
+      });
+      setIcon(deleteBtn, 'trash');
+      deleteBtn.addEventListener('click', async () => {
+        await this.handleDeleteStore(store.name, store.displayName, isCurrent);
+      });
+    });
+
+    // Warning if too many stores
+    if (stores.length > 20) {
+      this.storeTableContainer.createEl('p', {
+        text: 'Note: You have more than 20 stores. Consider cleaning up unused stores for better performance.',
+        cls: 'setting-item-description'
+      });
+    }
+  }
+
+  /**
+   * Refresh the store table
+   */
+  private async refreshStoreTable(): Promise<void> {
+    await this.renderStoreTable();
+  }
+
+  /**
+   * Handle deleting a store
+   */
+  private async handleDeleteStore(storeId: string, storeName: string, isCurrent: boolean): Promise<void> {
+    const confirmed = await this.plugin.confirmAction(
+      'Delete Store',
+      `Are you sure you want to permanently delete "${storeName}"?\n\n` +
+      `This will delete all indexed documents in this store and cannot be undone.` +
+      (isCurrent ? '\n\nThis is your current store. You will need to set a new current store or upload documents to create a new one.' : '')
+    );
+
+    if (!confirmed) return;
+
+    const service = this.plugin.storeManager?.['getOrCreateGeminiService']();
+    if (!service) return;
+
+    try {
+      await service.deleteStore(storeId);
+
+      // If deleting current store, clear from settings
+      if (isCurrent) {
+        this.plugin.stateManager.updateSettings({
+          storeName: '',
+          storeDisplayName: ''
+        });
+        this.plugin.stateManager.clearIndex();
+        await this.plugin.saveState();
+      }
+
+      new Notice(`Store "${storeName}" deleted successfully`);
+      await this.refreshStoreTable();
+
+      // Re-render entire settings if we deleted current store (to update other sections)
+      if (isCurrent) {
+        this.display();
+      }
+    } catch (err) {
+      console.error('[EzRAG] Failed to delete store:', err);
+      new Notice(`Failed to delete store "${storeName}". See console for details.`);
+    }
+  }
+
+  /**
+   * Handle setting a store as current
+   */
+  private async handleSetCurrentStore(storeId: string, storeName: string): Promise<void> {
+    const currentStoreName = this.plugin.stateManager.getSettings().storeDisplayName;
+
+    const confirmed = await this.plugin.confirmAction(
+      'Change Current Store',
+      `Set "${storeName}" as your current store?\n\n` +
+      (currentStoreName
+        ? `This will replace "${currentStoreName}" as your current store. Your local index will be cleared and rebuilt from this store.`
+        : `This will set "${storeName}" as your current store and rebuild your local index.`)
+    );
+
+    if (!confirmed) return;
+
+    try {
+      // Update settings
+      this.plugin.stateManager.updateSettings({
+        storeName: storeId,
+        storeDisplayName: storeName
+      });
+
+      // Clear and rebuild index
+      this.plugin.stateManager.clearIndex();
+      await this.plugin.saveState();
+
+      new Notice(`Current store set to "${storeName}". Rebuilding local index...`);
+
+      // Trigger index rebuild if this is a runner
+      if (Platform.isDesktopApp && this.plugin.runnerManager?.isRunner()) {
+        await this.plugin.rebuildIndex();
+      }
+
+      // Refresh the table to update the star icons
+      await this.refreshStoreTable();
+
+      // Re-render entire settings to update other sections
+      this.display();
+    } catch (err) {
+      console.error('[EzRAG] Failed to set current store:', err);
+      new Notice(`Failed to set current store. See console for details.`);
+    }
+  }
+
+  /**
+   * Format bytes to human-readable size
+   */
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
   }
 }

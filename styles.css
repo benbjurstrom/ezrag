@@ -404,3 +404,89 @@ button.ezrag-chat-send {
     transform: translateX(150%);
   }
 }
+
+/* Store Table Styling */
+.ezrag-store-table-container {
+  margin-top: var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+.ezrag-store-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-2);
+}
+
+.ezrag-store-table thead {
+  background: var(--background-secondary);
+  border-bottom: 2px solid var(--background-modifier-border);
+}
+
+.ezrag-store-table th {
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: left;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ezrag-store-table tbody tr {
+  border-bottom: 1px solid var(--background-modifier-border);
+  transition: background-color 0.1s ease;
+}
+
+.ezrag-store-table tbody tr:hover {
+  background: var(--background-secondary);
+}
+
+.ezrag-store-table td {
+  padding: var(--size-4-2) var(--size-4-3);
+  color: var(--text-normal);
+}
+
+/* Align numeric columns to the right */
+.ezrag-store-table td:nth-child(2),
+.ezrag-store-table td:nth-child(3),
+.ezrag-store-table td:nth-child(4),
+.ezrag-store-table td:nth-child(5) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ezrag-store-table th:nth-child(2),
+.ezrag-store-table th:nth-child(3),
+.ezrag-store-table th:nth-child(4),
+.ezrag-store-table th:nth-child(5) {
+  text-align: right;
+}
+
+/* Actions column */
+.ezrag-store-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.ezrag-store-actions button.clickable-icon {
+  padding: var(--size-2-1);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: all 0.1s ease;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ezrag-store-actions button.clickable-icon:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ezrag-store-actions button.clickable-icon svg {
+  width: 16px;
+  height: 16px;
+}
