@@ -278,13 +278,32 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   /**
+   * Get or create a temporary GeminiService for read-only operations
+   * This allows non-runner devices to view store stats and list stores
+   */
+  private getOrCreateGeminiService(): GeminiService | null {
+    // If we already have a service, use it
+    if (this.geminiService) {
+      return this.geminiService;
+    }
+
+    // If no API key, can't create service
+    const apiKey = this.stateManager.getSettings().apiKey;
+    if (!apiKey) {
+      new Notice('Please configure your API key first');
+      return null;
+    }
+
+    // Create temporary service for this operation
+    return new GeminiService(apiKey);
+  }
+
+  /**
    * Show store stats
    */
   async showStoreStats(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Gemini service not initialized');
-      return;
-    }
+    const service = this.getOrCreateGeminiService();
+    if (!service) return;
 
     const settings = this.stateManager.getSettings();
     if (!settings.storeName) {
@@ -293,7 +312,7 @@ export default class EzRAGPlugin extends Plugin {
     }
 
     try {
-      const store = await this.geminiService.getStore(settings.storeName);
+      const store = await service.getStore(settings.storeName);
 
       const modal = new Modal(this.app);
       modal.contentEl.createEl('h2', { text: 'Store Statistics' });
@@ -312,13 +331,11 @@ export default class EzRAGPlugin extends Plugin {
    * List all stores
    */
   async listAllStores(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Gemini service not initialized');
-      return;
-    }
+    const service = this.getOrCreateGeminiService();
+    if (!service) return;
 
     try {
-      const stores = await this.geminiService.listStores();
+      const stores = await service.listStores();
 
       const modal = new Modal(this.app);
       modal.contentEl.createEl('h2', { text: 'All FileSearchStores' });
@@ -343,10 +360,8 @@ export default class EzRAGPlugin extends Plugin {
    * Delete current store
    */
   async deleteCurrentStore(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Gemini service not initialized');
-      return;
-    }
+    const service = this.getOrCreateGeminiService();
+    if (!service) return;
 
     const settings = this.stateManager.getSettings();
     if (!settings.storeName) {
@@ -361,7 +376,7 @@ export default class EzRAGPlugin extends Plugin {
 
     if (confirmed) {
       try {
-        await this.geminiService.deleteStore(settings.storeName);
+        await service.deleteStore(settings.storeName);
 
         // Clear store configuration
         this.stateManager.updateSettings({

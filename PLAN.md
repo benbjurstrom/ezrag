@@ -341,15 +341,44 @@ Orchestrates all indexing operations.
 
 **File:** [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts)
 
-**Implementation:** See [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts) for the complete `EzRAGSettingTab` class, including:
-- Runner configuration toggle (desktop only)
-- API key input
-- Included folders setting
-- Upload concurrency slider
-- Chunking configuration (max tokens, overlap)
-- Manual actions (rebuild index, run deduplication)
-- Store management (view stats, list stores, delete store)
-- Index status display
+**Implementation:** See [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts) for the complete `EzRAGSettingTab` class.
+
+#### Settings Visibility Rules
+
+The settings UI adapts based on platform and runner status:
+
+**All Platforms (Desktop + Mobile):**
+- ✅ API Configuration
+  - Gemini API key input (syncs via vault data)
+- ✅ Store Management (Read-only operations)
+  - View current store stats
+  - List all stores for this API key
+
+**Desktop Only:**
+- Runner Configuration
+  - Toggle to enable/disable runner status
+  - Device ID display
+  - Status message when runner is disabled
+
+**Desktop Runner Only (when runner toggle is enabled):**
+- ✅ Indexing Configuration
+  - Included folders setting
+  - Upload concurrency slider
+  - Chunking configuration (max tokens, overlap)
+- ✅ Manual Actions
+  - Rebuild index button
+  - Run deduplication button
+- ✅ Store Management (Destructive operations)
+  - Delete current store button
+- ✅ Index Status Display
+  - Total/Ready/Pending/Error counts
+
+#### Implementation Notes
+
+- The UI uses `Platform.isDesktopApp` to detect platform
+- Runner status is checked via `this.plugin.runnerManager?.isRunner()`
+- Store management methods use `getOrCreateGeminiService()` helper to create temporary GeminiService for non-runner devices
+- This allows mobile/non-runner devices to view store information even though they can't index
 
 ### 6.6 Runner Pattern for Multi-Device Vaults
 
@@ -582,16 +611,24 @@ The **Runner** (indexing engine) requires Node.js modules:
 On mobile devices, the settings UI shows:
 
 ```
-╔═══════════════════════════════════════╗
-║ EzRAG Settings                       ║
-╠═══════════════════════════════════════╣
-║ Mobile Platform                       ║
-║ Indexing is not available on mobile  ║
-║ devices. The runner can only be      ║
-║ enabled on desktop. You can still    ║
-║ use chat and query features once     ║
-║ they are implemented.                ║
-╚═══════════════════════════════════════╝
+╔════════════════════════════════════════════╗
+║ EzRAG Settings                            ║
+╠════════════════════════════════════════════╣
+║ Mobile Platform                            ║
+║ Indexing is not available on mobile       ║
+║ devices. The runner can only be enabled   ║
+║ on desktop. You can still configure your  ║
+║ API key and use chat/query features once  ║
+║ they are implemented.                     ║
+╠════════════════════════════════════════════╣
+║ API Configuration                          ║
+║ ┌──────────────────────────────────────┐  ║
+║ │ Gemini API Key: [__________________] │  ║
+║ └──────────────────────────────────────┘  ║
+╠════════════════════════════════════════════╣
+║ Store Management                           ║
+║ [View Stats] [List Stores]                ║
+╚════════════════════════════════════════════╝
 ```
 
 **Decision:** This hybrid approach gives the best of both worlds:
