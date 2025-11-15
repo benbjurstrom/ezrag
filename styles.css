@@ -504,11 +504,17 @@ button.ezrag-chat-send {
   border-radius: var(--radius-m);
 }
 
+.ezrag-queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--size-4-1);
+}
+
 .ezrag-queue-phase {
   font-size: var(--font-ui-medium);
   font-weight: var(--font-semibold);
   color: var(--text-normal);
-  margin-bottom: var(--size-4-1);
 }
 
 .ezrag-queue-stats {
@@ -599,7 +605,7 @@ button.ezrag-chat-send {
 /* Index Stats Table Styling */
 .ezrag-index-stats-container {
   margin-top: var(--size-4-2);
-  margin-bottom: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
 }
 
 .ezrag-index-stats-table {

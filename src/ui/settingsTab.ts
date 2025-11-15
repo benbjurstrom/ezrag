@@ -89,13 +89,14 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     // Runner Configuration Toggle (Desktop only)
     if (isDesktop && this.plugin.runnerManager) {
-      new Setting(containerEl).setName('Indexing Configuration').setHeading();
+      new Setting(containerEl).setName('Document Index').setHeading();
 
       const runnerManager = this.plugin.runnerManager;
       const runnerState = runnerManager.getState();
 
       new Setting(containerEl)
         .setName('Use this device as the runner')
+        .setDesc('Only one desktop should manage indexing for this vault. Turn this on for exactly one machine.')
         .addToggle(toggle => toggle
           .setValue(runnerState.isRunner)
           .onChange(async (value) => {
@@ -110,13 +111,6 @@ export class EzRAGSettingTab extends PluginSettingTab {
           })
         );
 
-      // Help text under toggle
-      containerEl.createDiv({
-        cls: 'setting-item-description',
-        text: 'Only one desktop should manage indexing for this vault. Turn this on for exactly one machine.\n' +
-          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}…` : '')
-      });
-
       if (!runnerState.isRunner) {
         containerEl.createDiv({
           cls: 'setting-item-description',
@@ -127,9 +121,42 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     // Index Status (runner only - below runner config)
     if (isRunner) {
+      const indexStatusSetting = new Setting(containerEl)
+        .setName('Index Status')
+        .setDesc('The index tracks which notes have been uploaded to Gemini for search and retrieval.');
+
+      const controller = this.plugin.indexingController;
+      if (controller) {
+        indexStatusSetting.addButton((button) => {
+          const updateLabel = () => {
+            button.setButtonText(controller.isPaused() ? 'Resume' : 'Pause');
+          };
+          updateLabel();
+          button.onClick(() => {
+            if (!controller.isActive()) {
+              new Notice('Indexing is not active.');
+              return;
+            }
+            if (controller.isPaused()) {
+              controller.resume();
+            } else {
+              controller.pause();
+            }
+            updateLabel();
+          });
+        });
+      }
+
+      indexStatusSetting.addButton(button => button
+        .setButtonText('Open queue')
+        .onClick(() => {
+          this.plugin.openIndexingStatusModal();
+        })
+      );
+
       const stats = this.plugin.getIndexStats();
 
-      // Stats cards (no heading, self-explanatory)
+      // Stats cards
       const statsContainer = containerEl.createDiv({ cls: 'ezrag-index-stats-container' });
       const table = statsContainer.createEl('table', { cls: 'ezrag-index-stats-table' });
       const tbody = table.createEl('tbody');
@@ -155,39 +182,10 @@ export class EzRAGSettingTab extends PluginSettingTab {
       errorCell.createEl('div', { text: String(stats.error), cls: 'ezrag-stat-value' });
       errorCell.createEl('div', { text: 'Errors', cls: 'ezrag-stat-label' });
 
-      // Queue button (simple button under cards, no Setting wrapper)
-      const queueButtonContainer = containerEl.createDiv({ cls: 'ezrag-queue-button-container' });
-      const queueButton = queueButtonContainer.createEl('button', {
-        text: 'Open queue'
-      });
-      queueButton.addEventListener('click', () => {
-        this.plugin.openIndexingStatusModal();
-      });
-
-      const controller = this.plugin.indexingController;
       if (controller) {
         const controls = new Setting(containerEl)
-          .setName('Indexing controls')
-          .setDesc('Pause or resume indexing, force a vault scan, or clear the queue.');
-
-        controls.addButton((button) => {
-          const updateLabel = () => {
-            button.setButtonText(controller.isPaused() ? 'Resume' : 'Pause');
-          };
-          updateLabel();
-          button.onClick(() => {
-            if (!controller.isActive()) {
-              new Notice('Indexing is not active.');
-              return;
-            }
-            if (controller.isPaused()) {
-              controller.resume();
-            } else {
-              controller.pause();
-            }
-            updateLabel();
-          });
-        });
+          .setName('Rescan Notes')
+          .setDesc('Scan the vault for new or modified files and queue them for upload.');
 
         controls.addButton((button) => {
           button.setButtonText('Rescan');
@@ -209,64 +207,74 @@ export class EzRAGSettingTab extends PluginSettingTab {
           });
         });
 
-        controls.addButton((button) => {
-          button.setButtonText('Clear queue');
-          button.onClick(() => {
-            if (!controller.isActive()) {
-              new Notice('Indexing is not active.');
-              return;
-            }
-            controller.clearQueue();
-            new Notice('Cleared pending indexing jobs');
-          });
-        });
+          // Rebuild Index
+          new Setting(containerEl)
+          .setName('Rebuild Index')
+          .setDesc('Clear and rebuild the local index from Gemini. Files with matching content are restored without re-upload.')
+          .addButton(button => button
+            .setButtonText('Rebuild')
+            .onClick(async () => {
+              await this.plugin.rebuildIndex();
+            })
+          );
+
+        // Clean Up Remote Index (Manual Janitor)
+        new Setting(containerEl)
+          .setName('Clean Up Gemini Index')
+          .setDesc('Remove outdated document versions and deleted files from Gemini.')
+          .addButton(button => button
+            .setButtonText('Clean Up')
+            .onClick(async () => {
+              await this.plugin.runJanitorWithUI();
+            })
+          );
       }
+
+      // Chunking Configuration Section
+      new Setting(containerEl).setName('Document Index Configuration').setHeading();
 
       // Included Folders
       new Setting(containerEl)
-        .setName('Included Folders')
-        .setDesc('Comma-separated list of folders to index (empty = entire vault)')
-        .addText(text => text
-          .setPlaceholder('e.g., Projects, Notes')
-          .setValue(this.plugin.stateManager.getSettings().includeFolders.join(', '))
-          .onChange(async (value) => {
-            const folders = value.split(',').map(f => f.trim()).filter(Boolean);
-            this.plugin.stateManager.updateSettings({ includeFolders: folders });
-            await this.plugin.saveState();
-          })
-        );
+      .setName('Included Folders')
+      .setDesc('Comma-separated list of folders to index (empty = entire vault)')
+      .addText(text => text
+        .setPlaceholder('e.g., Projects, Notes')
+        .setValue(this.plugin.stateManager.getSettings().includeFolders.join(', '))
+        .onChange(async (value) => {
+          const folders = value.split(',').map(f => f.trim()).filter(Boolean);
+          this.plugin.stateManager.updateSettings({ includeFolders: folders });
+          await this.plugin.saveState();
+        })
+      );
 
-      // Concurrency
-      new Setting(containerEl)
-        .setName('Upload Concurrency')
-        .setDesc('Number of concurrent uploads (1-5). Each upload polls until complete.')
-        .addSlider(slider => slider
-          .setLimits(1, 5, 1)
-          .setValue(this.plugin.stateManager.getSettings().maxConcurrentUploads)
+    // Concurrency
+    new Setting(containerEl)
+      .setName('Upload Concurrency')
+      .setDesc('Number of concurrent uploads (1-5). Each upload polls until complete.')
+      .addSlider(slider => slider
+        .setLimits(1, 5, 1)
+        .setValue(this.plugin.stateManager.getSettings().maxConcurrentUploads)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.stateManager.updateSettings({ maxConcurrentUploads: value });
+          await this.plugin.saveState();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Upload throttle')
+      .setDesc('Delay before uploading a modified note (seconds). Helps batch rapid edits into a single upload.')
+      .addSlider(slider => {
+        const currentSeconds = Math.floor((this.plugin.stateManager.getSettings().uploadThrottleMs ?? 0) / 1000);
+        slider
+          .setLimits(0, 600, 10)
+          .setValue(currentSeconds)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.stateManager.updateSettings({ maxConcurrentUploads: value });
+            this.plugin.stateManager.updateSettings({ uploadThrottleMs: value * 1000 });
             await this.plugin.saveState();
-          })
-        );
-
-      new Setting(containerEl)
-        .setName('Upload throttle')
-        .setDesc('Delay before uploading a modified note (seconds). Helps batch rapid edits into a single upload.')
-        .addSlider(slider => {
-          const currentSeconds = Math.floor((this.plugin.stateManager.getSettings().uploadThrottleMs ?? 0) / 1000);
-          slider
-            .setLimits(0, 600, 10)
-            .setValue(currentSeconds)
-            .setDynamicTooltip()
-            .onChange(async (value) => {
-              this.plugin.stateManager.updateSettings({ uploadThrottleMs: value * 1000 });
-              await this.plugin.saveState();
-            });
-        });
-
-      // Chunking Configuration Section
-      new Setting(containerEl).setName('Chunking Strategy').setHeading();
+          });
+      });
 
       new Setting(containerEl)
         .setName('Max Tokens Per Chunk')
@@ -297,31 +305,6 @@ export class EzRAGSettingTab extends PluginSettingTab {
               chunkingConfig: { ...config, maxOverlapTokens: value }
             });
             await this.plugin.saveState();
-          })
-        );
-
-      // Manual Actions Section
-      new Setting(containerEl).setName('Manual Actions').setHeading();
-
-      // Rebuild Index
-      new Setting(containerEl)
-        .setName('Rebuild Index')
-        .setDesc('Clear local index and re-index all files')
-        .addButton(button => button
-          .setButtonText('Rebuild')
-          .onClick(async () => {
-            await this.plugin.rebuildIndex();
-          })
-        );
-
-      // Clean Up Remote Index (Manual Janitor)
-      new Setting(containerEl)
-        .setName('Clean Up Gemini Index')
-        .setDesc('Find and remove Gemini documents that don\'t match the vault\'s current state.')
-        .addButton(button => button
-          .setButtonText('Clean Up')
-          .onClick(async () => {
-            await this.plugin.runJanitorWithUI();
           })
         );
     }

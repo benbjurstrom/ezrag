@@ -1,6 +1,6 @@
 // src/ui/indexingStatusModal.ts - Queue viewer for indexing operations
 
-import { App, Modal } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import { ControllerSnapshot, IndexingController, IndexingPhase } from '../indexing/indexingController';
 import { IndexQueueEntry } from '../types';
 import type EzRAGPlugin from '../../main';
@@ -11,6 +11,7 @@ export class IndexingStatusModal extends Modal {
   private phaseEl!: HTMLElement;
   private statsEl!: HTMLElement;
   private queueContainer!: HTMLElement;
+  private clearQueueButton!: HTMLButtonElement;
   private timer?: number;
   private tableRows: Map<string, HTMLTableRowElement> = new Map();
 
@@ -31,7 +32,23 @@ export class IndexingStatusModal extends Modal {
 
     // Summary section
     const summaryEl = contentEl.createDiv({ cls: 'ezrag-queue-summary' });
-    this.phaseEl = summaryEl.createEl('div', { cls: 'ezrag-queue-phase' });
+
+    // Header row with phase and clear button
+    const headerEl = summaryEl.createEl('div', { cls: 'ezrag-queue-header' });
+    this.phaseEl = headerEl.createEl('div', { cls: 'ezrag-queue-phase' });
+    this.clearQueueButton = headerEl.createEl('button', {
+      text: 'Clear queue',
+      cls: 'mod-warning'
+    });
+    this.clearQueueButton.addEventListener('click', () => {
+      if (!this.controller.isActive()) {
+        new Notice('Indexing is not active.');
+        return;
+      }
+      this.controller.clearQueue();
+      new Notice('Cleared pending indexing jobs');
+    });
+
     this.statsEl = summaryEl.createEl('div', { cls: 'ezrag-queue-stats' });
 
     // Queue table container
@@ -78,6 +95,9 @@ export class IndexingStatusModal extends Modal {
     const entries = this.plugin.stateManager.getQueueEntries();
     this.queueContainer.empty();
     this.tableRows.clear();
+
+    // Update clear button state
+    this.clearQueueButton.disabled = entries.length === 0;
 
     if (entries.length === 0) {
       this.queueContainer.createEl('p', {
