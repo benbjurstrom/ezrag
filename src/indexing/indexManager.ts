@@ -2,11 +2,12 @@
 
 import PQueue from 'p-queue';
 import { StateManager } from '../state/state';
-import { IndexedDocState } from '../types';
+import { IndexedDocState, IndexQueueEntry, IndexQueueOperation } from '../types';
 import { GeminiService } from '../gemini/geminiService';
 import { Janitor } from './janitor';
 import { computeContentHash, computePathHash } from './hashUtils';
 import { App, TFile, Vault } from 'obsidian';
+import { ConnectionManager } from '../connection/connectionManager';
 
 export interface IndexingStats {
   total: number;
@@ -23,6 +24,7 @@ export interface IndexManagerOptions {
   vaultName: string;
   onProgress?: (stats: IndexingStats, status: string) => void;
   onStateChange?: () => void;
+  connectionManager: ConnectionManager;
 }
 
 export class IndexManager {
@@ -35,6 +37,8 @@ export class IndexManager {
   private janitor: Janitor;
   private onProgress?: (stats: IndexingStats, status: string) => void;
   private onStateChange?: () => void;
+  private connectionManager: ConnectionManager;
+  private processingEntries = new Set<string>();
 
   private stats: IndexingStats = {
     total: 0,
@@ -51,6 +55,7 @@ export class IndexManager {
     this.vaultName = options.vaultName;
     this.onProgress = options.onProgress;
     this.onStateChange = options.onStateChange;
+    this.connectionManager = options.connectionManager;
 
     const settings = this.state.getSettings();
     this.queue = new PQueue({ concurrency: settings.maxConcurrentUploads });
@@ -66,6 +71,12 @@ export class IndexManager {
         }
       },
     });
+
+    const pendingEntries = this.state.getQueueEntries().length;
+    if (pendingEntries > 0) {
+      this.stats.total = pendingEntries;
+      this.stats.pending = pendingEntries;
+    }
   }
 
   /**
@@ -78,17 +89,20 @@ export class IndexManager {
   async reconcileOnStartup(syncWithRemote: boolean = false): Promise<void> {
     const files = this.getIndexableFiles();
 
-    this.stats.total = 0;
+    const pendingQueueCount = this.state.getQueueEntries().length;
+    this.stats.total = pendingQueueCount;
     this.stats.completed = 0;
     this.stats.failed = 0;
-    this.stats.pending = 0;
+    this.stats.pending = pendingQueueCount;
 
     console.log(`[IndexManager] Reconciling ${files.length} files...`);
     this.updateProgress('Scanning');
+    this.tryProcessQueue();
 
     // If syncing with remote, fetch all remote docs first
     let remoteDocsByPathHash = new Map<string, any>();
-    if (syncWithRemote) {
+    const shouldSyncRemote = syncWithRemote && this.connectionManager.isConnected();
+    if (shouldSyncRemote) {
       console.log('[IndexManager] Fetching remote documents for smart reconciliation...');
       try {
         const settings = this.state.getSettings();
@@ -104,6 +118,8 @@ export class IndexManager {
       } catch (err) {
         console.error('[IndexManager] Failed to fetch remote docs, proceeding without sync:', err);
       }
+    } else if (syncWithRemote && !this.connectionManager.isConnected()) {
+      console.warn('[IndexManager] Cannot reconcile with remote while offline. Will resync later.');
     }
 
     // Scan all files and queue those that need indexing
@@ -117,7 +133,7 @@ export class IndexManager {
         const state = this.state.getDocState(file.path);
 
         // If syncing with remote, check if we can restore state from remote
-        if (syncWithRemote && !state && remoteDocsByPathHash.has(pathHash)) {
+        if (shouldSyncRemote && !state && remoteDocsByPathHash.has(pathHash)) {
           const remoteDoc = remoteDocsByPathHash.get(pathHash);
           const remoteHashMeta = remoteDoc.customMetadata?.find((m: any) => m.key === 'obsidian_content_hash');
           const remoteHash = remoteHashMeta?.stringValue;
@@ -148,18 +164,17 @@ export class IndexManager {
                               state.status === 'error';
 
         if (needsIndexing) {
-          this.queueIndexJob(file, content, contentHash);
+          this.queueIndexJob(file, contentHash);
         }
       } catch (err) {
         console.error(`Failed to scan ${file.path}:`, err);
       }
     }
 
-    console.log(`[IndexManager] Queued ${this.stats.pending} files for indexing`);
+    console.log(`[IndexManager] Queue contains ${this.stats.pending} files for indexing`);
 
-    // Don't await queue.onIdle() - let jobs run in background
-    // Progress updates happen via onProgress callback
     this.updateProgress('Indexing');
+    this.tryProcessQueue();
   }
 
   /**
@@ -174,7 +189,7 @@ export class IndexManager {
     try {
       const content = await this.vault.read(file);
       const contentHash = computeContentHash(content);
-      this.queueIndexJob(file, content, contentHash);
+      this.queueIndexJob(file, contentHash);
     } catch (err) {
       console.error(`Failed to queue new file ${file.path}:`, err);
     }
@@ -196,7 +211,7 @@ export class IndexManager {
 
       // Only queue if content actually changed
       if (!state || state.contentHash !== contentHash || state.status === 'error') {
-        this.queueIndexJob(file, content, contentHash);
+        this.queueIndexJob(file, contentHash);
       }
     } catch (err) {
       console.error(`Failed to check ${file.path}:`, err);
@@ -211,26 +226,25 @@ export class IndexManager {
       return;
     }
 
-    // Delete old document if it exists
-    const oldState = this.state.getDocState(oldPath);
-    if (oldState?.geminiDocumentName) {
-      try {
-        await this.gemini.deleteDocument(oldState.geminiDocumentName);
-      } catch (err) {
-        console.error(`Failed to delete old document for ${oldPath}:`, err);
-      }
-    }
-
-    // Remove old state
-    this.state.removeDocState(oldPath);
+    // Drop any pending work for the old path
+    this.state.removeQueueEntriesByPath(oldPath);
     this.notifyStateChange();
+
+    const oldState = this.state.getDocState(oldPath);
+    if (oldState) {
+      if (oldState.geminiDocumentName) {
+        this.queueDeleteJob(oldPath, oldState.geminiDocumentName);
+      }
+      this.state.removeDocState(oldPath);
+      this.notifyStateChange();
+    }
 
     // Queue new path for indexing if in included folders
     if (this.isInIncludedFolders(file)) {
       try {
         const content = await this.vault.read(file);
         const contentHash = computeContentHash(content);
-        this.queueIndexJob(file, content, contentHash);
+        this.queueIndexJob(file, contentHash);
       } catch (err) {
         console.error(`Failed to queue renamed file ${file.path}:`, err);
       }
@@ -241,21 +255,24 @@ export class IndexManager {
    * Handle file deletion
    */
   async onFileDeleted(path: string): Promise<void> {
-    const state = this.state.getDocState(path);
-    if (!state) return;
+    // Remove any pending work for this path
+    this.state.removeQueueEntriesByPath(path);
 
-    // Delete from Gemini
-    if (state.geminiDocumentName) {
-      try {
-        await this.gemini.deleteDocument(state.geminiDocumentName);
-      } catch (err) {
-        console.error(`Failed to delete document for ${path}:`, err);
-      }
+    const state = this.state.getDocState(path);
+    if (!state) {
+      this.notifyStateChange();
+      return;
     }
 
-    // Remove from state
+    const remoteId = state.geminiDocumentName;
+
+    // Remove from local state immediately
     this.state.removeDocState(path);
     this.notifyStateChange();
+
+    if (remoteId) {
+      this.queueDeleteJob(path, remoteId);
+    }
   }
 
   /**
@@ -318,57 +335,185 @@ export class IndexManager {
    *
    * Includes retry logic with exponential backoff for transient errors
    */
-  private queueIndexJob(file: TFile, content: string, contentHash: string): void {
+  private queueIndexJob(file: TFile, contentHash: string): void {
+    const existingEntry = this.state.findQueueEntryByPath(file.path);
+    const entry: IndexQueueEntry = {
+      id: existingEntry?.id ?? this.generateQueueEntryId(),
+      vaultPath: file.path,
+      operation: 'upload',
+      contentHash,
+      enqueuedAt: existingEntry?.enqueuedAt ?? Date.now(),
+      attempts: existingEntry?.attempts ?? 0,
+      lastAttemptAt: existingEntry?.lastAttemptAt,
+    };
+
+    this.state.addOrUpdateQueueEntry(entry);
+    if (!existingEntry) {
+      this.stats.total++;
+      this.stats.pending++;
+    }
+
     this.markPendingState(file, contentHash);
-    this.stats.total++;
-    this.stats.pending++;
     this.updateProgress('Queued');
+    this.notifyStateChange();
+    this.tryProcessQueue();
+  }
 
-    this.queue.add(async () => {
-      const maxRetries = 3;
-      let lastError: Error | null = null;
+  private queueDeleteJob(vaultPath: string, remoteId: string): void {
+    const existingEntry = this.state.findQueueEntryByPath(vaultPath);
+    const entry: IndexQueueEntry = {
+      id: existingEntry?.id ?? this.generateQueueEntryId(),
+      vaultPath,
+      operation: 'delete',
+      remoteId,
+      enqueuedAt: existingEntry?.enqueuedAt ?? Date.now(),
+      attempts: existingEntry?.attempts ?? 0,
+      lastAttemptAt: existingEntry?.lastAttemptAt,
+    };
 
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          await this.indexFile(file, content, contentHash);
-          this.stats.completed++;
-          this.stats.pending = Math.max(0, this.stats.pending - 1);
-          this.updateProgress('Indexing');
-          return; // Success, exit retry loop
-        } catch (err) {
-          lastError = err as Error;
+    this.state.addOrUpdateQueueEntry(entry);
+    if (!existingEntry) {
+      this.stats.total++;
+      this.stats.pending++;
+    }
 
-          // Check if error is retryable (network, rate limit, etc.)
-          const isRetryable = this.isRetryableError(err);
+    this.updateProgress('Queued');
+    this.notifyStateChange();
+    this.tryProcessQueue();
+  }
 
-          if (!isRetryable || attempt === maxRetries - 1) {
-            // Not retryable or final attempt, fail permanently
-            break;
+  private tryProcessQueue(): void {
+    if (!this.connectionManager.isConnected() || this.queue.isPaused) {
+      return;
+    }
+
+    const entries = this.state.getQueueEntries();
+    for (const entry of entries) {
+      if (this.processingEntries.has(entry.id)) {
+        continue;
+      }
+
+      this.processingEntries.add(entry.id);
+      this.queue
+        .add(async () => {
+          try {
+            await this.processQueueEntry(entry);
+          } finally {
+            this.processingEntries.delete(entry.id);
           }
+        })
+        .catch((err) => {
+          console.error('[IndexManager] Queue entry crashed', err);
+        });
+    }
+  }
 
-          // Exponential backoff: 2^attempt * 1000ms (1s, 2s, 4s)
-          const delay = Math.pow(2, attempt) * 1000;
-          console.log(`Retry ${attempt + 1}/${maxRetries} for ${file.path} after ${delay}ms`);
-          await this.delay(delay);
-        }
-      }
+  private async processQueueEntry(entry: IndexQueueEntry): Promise<void> {
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      // All retries failed
-      this.stats.failed++;
-      this.stats.pending = Math.max(0, this.stats.pending - 1);
-      console.error(`Failed to index ${file.path} after ${maxRetries} attempts:`, lastError);
-
-      // Mark as error in state
-      const state = this.state.getDocState(file.path);
-      if (state) {
-        state.status = 'error';
-        state.errorMessage = lastError?.message || 'Unknown error';
-        this.state.setDocState(file.path, state);
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (!this.connectionManager.isConnected()) {
+        this.state.updateQueueEntry(entry.id, {
+          lastAttemptAt: Date.now(),
+          attempts: entry.attempts + attempt,
+        });
         this.notifyStateChange();
+        this.updateProgress('Waiting for connection');
+        return;
       }
 
-      this.updateProgress('Indexing');
-    });
+      try {
+        if (entry.operation === 'upload') {
+          await this.processUploadEntry(entry);
+        } else {
+          await this.processDeleteEntry(entry);
+        }
+
+        this.state.removeQueueEntry(entry.id);
+        this.stats.completed++;
+        this.stats.pending = Math.max(0, this.stats.pending - 1);
+        this.updateProgress('Indexing');
+        this.notifyStateChange();
+        return;
+      } catch (err) {
+        lastError = err as Error;
+
+        if (this.isAuthError(err)) {
+          this.connectionManager.setApiKeyValid(false, 'Gemini rejected the API key. Please verify it in settings.');
+          return;
+        }
+
+        const isRetryable = this.isRetryableError(err);
+        if (!isRetryable || attempt === maxRetries - 1) {
+          break;
+        }
+
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`Retry ${attempt + 1}/${maxRetries} for ${entry.vaultPath} after ${delay}ms`);
+        await this.delay(delay);
+      }
+    }
+
+    if (!this.connectionManager.isConnected()) {
+      this.state.updateQueueEntry(entry.id, {
+        lastAttemptAt: Date.now(),
+        attempts: entry.attempts + 1,
+      });
+      this.notifyStateChange();
+      this.updateProgress('Waiting for connection');
+      return;
+    }
+
+    this.stats.failed++;
+    this.stats.pending = Math.max(0, this.stats.pending - 1);
+
+    if (entry.operation === 'upload') {
+      this.markDocError(entry.vaultPath, lastError);
+    }
+
+    this.state.removeQueueEntry(entry.id);
+    this.updateProgress('Indexing');
+    this.notifyStateChange();
+  }
+
+  private async processUploadEntry(entry: IndexQueueEntry): Promise<void> {
+    const abstract = this.vault.getAbstractFileByPath(entry.vaultPath);
+    if (!(abstract instanceof TFile)) {
+      console.warn(`[IndexManager] File missing while processing queue: ${entry.vaultPath}`);
+      this.state.removeDocState(entry.vaultPath);
+      this.notifyStateChange();
+      return;
+    }
+
+    const content = await this.vault.read(abstract);
+    const contentHash = computeContentHash(content);
+    await this.indexFile(abstract, content, contentHash);
+  }
+
+  private async processDeleteEntry(entry: IndexQueueEntry): Promise<void> {
+    if (!entry.remoteId) {
+      console.warn('[IndexManager] Missing remote ID for delete job, skipping');
+      return;
+    }
+
+    try {
+      await this.gemini.deleteDocument(entry.remoteId);
+    } catch (err) {
+      if (!this.isNotFoundError(err)) {
+        throw err;
+      }
+      console.log('[IndexManager] Remote document already deleted.');
+    }
+  }
+
+  private markDocError(vaultPath: string, err: Error | null): void {
+    const state = this.state.getDocState(vaultPath);
+    if (!state) return;
+    state.status = 'error';
+    state.errorMessage = err?.message || 'Unknown error';
+    this.state.setDocState(vaultPath, state);
+    this.notifyStateChange();
   }
 
   /**
@@ -385,7 +530,9 @@ export class IndexManager {
       message.includes('429') ||
       message.includes('503') ||
       message.includes('econnreset') ||
-      message.includes('enotfound')
+      message.includes('enotfound') ||
+      message.includes('failed to fetch') ||
+      message.includes('offline')
     );
   }
 
@@ -572,6 +719,30 @@ export class IndexManager {
     }
   }
 
+  private generateQueueEntryId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID();
+    }
+    return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  private isAuthError(err: any): boolean {
+    const message = (err?.message ?? '').toLowerCase();
+    if (!message) return false;
+    return (
+      message.includes('401') ||
+      message.includes('403') ||
+      message.includes('unauthorized') ||
+      message.includes('api key')
+    );
+  }
+
+  private isNotFoundError(err: any): boolean {
+    const message = (err?.message ?? '').toLowerCase();
+    if (!message) return false;
+    return message.includes('404') || message.includes('not found');
+  }
+
   getStats(): IndexingStats {
     return { ...this.stats };
   }
@@ -586,14 +757,34 @@ export class IndexManager {
 
   resume(): void {
     this.queue.start();
+    this.tryProcessQueue();
   }
 
   clearQueue(): void {
     this.queue.clear();
+    this.processingEntries.clear();
+
+    const pendingEntries = this.state.getQueueEntries();
+    for (const entry of pendingEntries) {
+      if (entry.operation === 'upload') {
+        const doc = this.state.getDocState(entry.vaultPath);
+        if (doc) {
+          doc.status = 'error';
+          doc.errorMessage = 'Cleared manually from queue';
+          this.state.setDocState(entry.vaultPath, doc);
+        }
+      }
+    }
+
+    this.state.clearQueue();
+    this.stats.pending = 0;
+    this.updateProgress('Idle');
+    this.notifyStateChange();
   }
 
   dispose(): void {
     this.queue.clear();
+    this.processingEntries.clear();
     this.stats = {
       total: 0,
       completed: 0,

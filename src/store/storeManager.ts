@@ -7,7 +7,10 @@ import { GeminiService } from '../gemini/geminiService';
 export class StoreManager {
   constructor(private plugin: EzRAGPlugin) {}
 
-  private getOrCreateGeminiService(): GeminiService | null {
+  private getOrCreateGeminiService(action: string = 'perform this action'): GeminiService | null {
+    if (!this.plugin.requireConnection(action)) {
+      return null;
+    }
     const service = this.plugin.getGeminiService();
     if (!service) {
       new Notice('Please configure your API key first');
@@ -17,7 +20,7 @@ export class StoreManager {
   }
 
   async showStoreStats(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
+    const service = this.getOrCreateGeminiService('fetch store statistics');
     if (!service) return;
 
     const settings = this.plugin.stateManager.getSettings();
@@ -43,7 +46,7 @@ export class StoreManager {
   }
 
   async listAllStores(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
+    const service = this.getOrCreateGeminiService('list FileSearch stores');
     if (!service) return;
 
     try {
@@ -69,7 +72,7 @@ export class StoreManager {
   }
 
   async deleteCurrentStore(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
+    const service = this.getOrCreateGeminiService('delete the current store');
     if (!service) return;
 
     const settings = this.plugin.stateManager.getSettings();

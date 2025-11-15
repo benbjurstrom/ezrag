@@ -234,6 +234,16 @@ export class ChatView extends ItemView {
         message: 'Add your Gemini API key in settings to start chatting.'
       };
     }
+    const connectionState = this.plugin.getConnectionState();
+    if (!connectionState.connected) {
+      const message = connectionState.online
+        ? (connectionState.apiKeyError ?? 'Validate your API key in settings to enable chat.')
+        : 'Connect to the internet to use chat.';
+      return {
+        ready: false,
+        message,
+      };
+    }
     if (!settings.storeName) {
       return {
         ready: false,
@@ -256,7 +266,7 @@ export class ChatView extends ItemView {
       this.inputEl.disabled = this.isLoading;
       this.sendButton.disabled = this.isLoading;
     } else {
-      this.statusEl.setText('Not configured');
+      this.statusEl.setText('Unavailable');
       this.statusEl.addClass('is-disabled');
       this.inputEl.disabled = true;
       this.sendButton.disabled = true;
@@ -415,6 +425,11 @@ export class ChatView extends ItemView {
     const readiness = this.getReadiness();
     if (!readiness.ready) {
       new Notice(readiness.message ?? 'Chat is not ready yet.');
+      return;
+    }
+
+    if (!this.plugin.isConnected()) {
+      new Notice('Gemini is offline. Check your connection and API key.');
       return;
     }
 

@@ -1,12 +1,30 @@
 // src/state/state.ts - Obsidian-agnostic state management
 
-import { PersistedData, PluginSettings, IndexState, IndexedDocState, DEFAULT_DATA } from '../types';
+import { PersistedData, PluginSettings, IndexedDocState, DEFAULT_DATA, IndexQueueEntry } from '../types';
 
 export class StateManager {
   private data: PersistedData;
 
   constructor(initialData?: Partial<PersistedData>) {
-    this.data = { ...DEFAULT_DATA, ...initialData };
+    const base = structuredClone(DEFAULT_DATA);
+
+    if (initialData) {
+      base.version = initialData.version ?? base.version;
+      if (initialData.settings) {
+        base.settings = { ...base.settings, ...initialData.settings };
+      }
+
+      if (initialData.index) {
+        if (initialData.index.docs) {
+          base.index.docs = { ...base.index.docs, ...initialData.index.docs };
+        }
+        if (initialData.index.queue) {
+          base.index.queue = [...initialData.index.queue];
+        }
+      }
+    }
+
+    this.data = base;
   }
 
   getSettings(): PluginSettings {
@@ -35,6 +53,41 @@ export class StateManager {
 
   clearIndex(): void {
     this.data.index.docs = {};
+    this.data.index.queue = [];
+  }
+
+  // ===== Persistent queue helpers =====
+
+  getQueueEntries(): IndexQueueEntry[] {
+    return [...this.data.index.queue];
+  }
+
+  addOrUpdateQueueEntry(entry: IndexQueueEntry): void {
+    const filtered = this.data.index.queue.filter((existing) => existing.vaultPath !== entry.vaultPath);
+    filtered.push(entry);
+    this.data.index.queue = filtered;
+  }
+
+  removeQueueEntry(entryId: string): void {
+    this.data.index.queue = this.data.index.queue.filter((entry) => entry.id !== entryId);
+  }
+
+  removeQueueEntriesByPath(vaultPath: string): void {
+    this.data.index.queue = this.data.index.queue.filter((entry) => entry.vaultPath !== vaultPath);
+  }
+
+  findQueueEntryByPath(vaultPath: string): IndexQueueEntry | undefined {
+    return this.data.index.queue.find((entry) => entry.vaultPath === vaultPath);
+  }
+
+  updateQueueEntry(entryId: string, updates: Partial<IndexQueueEntry>): void {
+    this.data.index.queue = this.data.index.queue.map((entry) =>
+      entry.id === entryId ? { ...entry, ...updates } : entry
+    );
+  }
+
+  clearQueue(): void {
+    this.data.index.queue = [];
   }
 
   exportData(): PersistedData {

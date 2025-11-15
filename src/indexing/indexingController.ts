@@ -4,6 +4,7 @@ import { App, TFile } from 'obsidian';
 import { IndexManager, IndexingStats } from './indexManager';
 import { StateManager } from '../state/state';
 import { GeminiService } from '../gemini/geminiService';
+import { ConnectionManager } from '../connection/connectionManager';
 
 export type IndexingPhase = 'idle' | 'scanning' | 'indexing' | 'paused';
 
@@ -12,6 +13,7 @@ export interface IndexingControllerOptions {
   stateManager: StateManager;
   persistState: () => Promise<void>;
   onStateChange?: (snapshot: ControllerSnapshot) => void;
+  connectionManager: ConnectionManager;
 }
 
 export interface ControllerSnapshot {
@@ -32,12 +34,14 @@ export class IndexingController {
   private saveTimeout: number | null = null;
   private disposed = false;
   private onStateChange?: (snapshot: ControllerSnapshot) => void;
+  private readonly connectionManager: ConnectionManager;
 
   constructor(options: IndexingControllerOptions) {
     this.app = options.app;
     this.stateManager = options.stateManager;
     this.persistState = options.persistState;
     this.onStateChange = options.onStateChange;
+    this.connectionManager = options.connectionManager;
   }
 
   /**
@@ -89,6 +93,7 @@ export class IndexingController {
       vaultName: this.app.vault.getName(),
       onProgress: (stats) => this.handleProgress(stats),
       onStateChange: () => this.schedulePersist(),
+      connectionManager: this.connectionManager,
     });
 
     this.stats = this.indexManager.getStats();

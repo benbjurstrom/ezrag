@@ -44,6 +44,8 @@ export class EzRAGSettingTab extends PluginSettingTab {
     // API Key Section (ALWAYS VISIBLE ON ALL PLATFORMS)
     new Setting(containerEl).setName('API Configuration').setHeading();
 
+    const connectionState = this.plugin.getConnectionState();
+
     new Setting(containerEl)
       .setName('Gemini API Key')
       .setDesc('Your Google Gemini API key (get it from ai.google.dev)')
@@ -57,6 +59,13 @@ export class EzRAGSettingTab extends PluginSettingTab {
           }
         })
       );
+
+    if (connectionState.apiKeyError) {
+      containerEl.createDiv({
+        cls: 'setting-item-description mod-warning',
+        text: connectionState.apiKeyError,
+      });
+    }
 
     // Store Management Section (Read-only operations visible on all platforms)
     new Setting(containerEl)
@@ -235,7 +244,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
    * Fetch store data from Gemini API
    */
   private async fetchStoreData(): Promise<StoreTableData[]> {
-    const service = this.plugin.storeManager?.['getOrCreateGeminiService']();
+    const service = this.plugin.storeManager?.['getOrCreateGeminiService']('load Gemini stores');
     if (!service) {
       return [];
     }
@@ -360,7 +369,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
 
     if (!confirmed) return;
 
-    const service = this.plugin.storeManager?.['getOrCreateGeminiService']();
+    const service = this.plugin.storeManager?.['getOrCreateGeminiService']('delete a FileSearch store');
     if (!service) return;
 
     try {

@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "ezrag-obsidian-plugin",
 	"version": "1.0.0",
-	"description": "Turns your Obsidian (https://obsidian.md) vault into a Gemini-powered RAG index.",
+	"description": "Turn your Obsidian (https://obsidian.md) vault into a Gemini-powered RAG index.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

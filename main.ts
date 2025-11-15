@@ -11,6 +11,7 @@ import { EzRAGSettingTab } from './src/ui/settingsTab';
 import { IndexingStatusModal } from './src/ui/indexingStatusModal';
 import { StoreManager } from './src/store/storeManager';
 import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
+import { ConnectionManager, ConnectionState } from './src/connection/connectionManager';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
@@ -18,7 +19,12 @@ export default class EzRAGPlugin extends Plugin {
   geminiService: GeminiService | null = null;
   indexingController: IndexingController | null = null;
   storeManager: StoreManager | null = null;
+  connectionManager!: ConnectionManager;
   statusBarItem: HTMLElement | null = null;
+  private unsubscribeConnection?: () => void;
+  private lastConnectionState: ConnectionState | null = null;
+  private pausedByDisconnect = false;
+  private lastApiKeyError?: string;
 
   async onload() {
     console.log('Loading EzRAG plugin');
@@ -38,12 +44,28 @@ export default class EzRAGPlugin extends Plugin {
     }
     this.stateManager = new StateManager(savedData || DEFAULT_DATA);
 
+    // Initialize connection manager
+    this.connectionManager = new ConnectionManager();
+    this.lastConnectionState = this.connectionManager.getState();
+    this.lastApiKeyError = this.lastConnectionState.apiKeyError;
+
+    // Subscribe to connection changes for auto-pause/resume
+    this.unsubscribeConnection = this.connectionManager.subscribe((state) => {
+      this.handleConnectionChange(state);
+    });
+
     // Load runner state (per-machine, per-vault, non-synced)
     if (Platform.isDesktopApp) {
       this.runnerManager = new RunnerStateManager(this.app, this.manifest.id);
     }
 
     this.storeManager = new StoreManager(this);
+
+    // Validate existing API key on startup (async, don't block)
+    const existingApiKey = this.stateManager.getSettings().apiKey;
+    if (existingApiKey) {
+      this.validateApiKeyOnStartup(existingApiKey);
+    }
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
 
@@ -53,7 +75,8 @@ export default class EzRAGPlugin extends Plugin {
       persistState: () => this.saveState(),
       onStateChange: () => {
         this.updateStatusBar(this.getStatusBarText());
-      }
+      },
+      connectionManager: this.connectionManager,
     });
 
     // FIRST-RUN ONBOARDING: Check if API key is set
@@ -154,6 +177,9 @@ export default class EzRAGPlugin extends Plugin {
 
   onunload() {
     console.log('Unloading EzRAG plugin');
+    this.unsubscribeConnection?.();
+    this.unsubscribeConnection = undefined;
+    this.connectionManager?.dispose();
     this.indexingController?.dispose();
     this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => leaf.detach());
   }
@@ -184,14 +210,43 @@ export default class EzRAGPlugin extends Plugin {
     return this.geminiService;
   }
 
-  async updateApiKey(value: string): Promise<string> {
+  getConnectionState(): ConnectionState {
+    return this.connectionManager.getState();
+  }
+
+  requireConnection(action: string): boolean {
+    const state = this.connectionManager.getState();
+    if (state.connected) {
+      return true;
+    }
+
+    const reason = state.online
+      ? (state.apiKeyError ?? 'Gemini API key needs to be validated in settings.')
+      : 'No internet connection detected.';
+
+    new Notice(`Cannot ${action}: ${reason}`);
+    return false;
+  }
+
+  isConnected(): boolean {
+    return this.connectionManager.isConnected();
+  }
+
+  /**
+   * Validate and update API key
+   * Returns validation result with success/error info
+   */
+  async validateAndUpdateApiKey(value: string): Promise<{ valid: boolean; error?: string; message?: string }> {
     const trimmed = value.trim();
     const current = this.stateManager.getSettings().apiKey;
 
+    // No change
     if (trimmed === current) {
-      return '';
+      const isValid = this.connectionManager.getState().apiKeyValid;
+      return { valid: isValid };
     }
 
+    // Key cleared
     if (!trimmed) {
       this.stateManager.updateSettings({
         apiKey: '',
@@ -199,26 +254,136 @@ export default class EzRAGPlugin extends Plugin {
         storeDisplayName: ''
       });
       this.geminiService = null;
+      this.connectionManager.setApiKeyValid(false);
       await this.saveState();
       this.indexingController?.stop();
+      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
-      return 'API key cleared. Indexing stopped.';
+      return { valid: false, message: 'API key cleared' };
     }
 
+    // Save key first (so we can test it)
     this.stateManager.updateSettings({
       apiKey: trimmed,
       storeName: '',
       storeDisplayName: ''
     });
-    this.geminiService = new GeminiService(trimmed);
     await this.saveState();
 
-    if (this.runnerManager?.isRunner()) {
-      return await this.refreshIndexingState('api-key');
+    // Check if online first
+    if (!this.connectionManager.getState().online) {
+      return { valid: false, error: 'No internet connection. Cannot validate API key.' };
     }
 
+    // Validate by making a lightweight API call
+    try {
+      const tempService = new GeminiService(trimmed);
+      // Try to list stores - this will fail if API key is invalid
+      await tempService.listStores();
+
+      // Success - key is valid
+      this.geminiService = tempService;
+      this.connectionManager.setApiKeyValid(true);
+
+      // If we're the runner, start/refresh indexing
+      if (this.runnerManager?.isRunner()) {
+        await this.refreshIndexingState('api-key');
+      }
+
+      this.updateStatusBar(this.getStatusBarText());
+      return { valid: true, message: 'API key validated successfully' };
+
+    } catch (err) {
+      console.error('[EzRAG] API key validation failed:', err);
+      this.geminiService = null;
+      this.indexingController?.stop();
+      this.pausedByDisconnect = false;
+      this.updateStatusBar(this.getStatusBarText());
+
+      // Distinguish error types
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const lower = errorMsg.toLowerCase();
+      let friendlyError = `Validation failed: ${errorMsg}`;
+      if (errorMsg.includes('401') || errorMsg.includes('403') || lower.includes('api key') || lower.includes('unauthorized')) {
+        friendlyError = 'Invalid API key. Please check your key and try again.';
+      } else if (lower.includes('network') || lower.includes('fetch')) {
+        friendlyError = 'Network error. Please check your internet connection.';
+      }
+
+      this.connectionManager.setApiKeyValid(false, friendlyError);
+      return { valid: false, error: friendlyError };
+    }
+  }
+
+  /**
+   * Legacy method for backwards compatibility - delegates to validateAndUpdateApiKey
+   */
+  async updateApiKey(value: string): Promise<string> {
+    const result = await this.validateAndUpdateApiKey(value);
+    if (result.error) return result.error;
+    if (result.message) return result.message;
+    return '';
+  }
+
+  /**
+   * Validate API key on startup (async, doesn't block plugin load)
+   */
+  private async validateApiKeyOnStartup(apiKey: string): Promise<void> {
+    if (!apiKey) return;
+    if (!this.connectionManager.getState().online) return;
+
+    try {
+      const tempService = new GeminiService(apiKey);
+      await tempService.listStores();
+      this.connectionManager.setApiKeyValid(true);
+      console.log('[EzRAG] Stored API key validated successfully');
+    } catch (err) {
+      console.error('[EzRAG] Stored API key validation failed:', err);
+      this.connectionManager.setApiKeyValid(false, 'Stored API key appears to be invalid.');
+      new Notice('EzRAG: Stored API key appears to be invalid. Please update it in settings.');
+    }
+  }
+
+  /**
+   * Handle connection state changes (online/offline, API key validity)
+   */
+  private handleConnectionChange(state: ConnectionState): void {
+    const previousConnected = this.lastConnectionState?.connected ?? state.connected;
+    const justLost = previousConnected && !state.connected;
+    const justRestored = !previousConnected && state.connected;
+    this.lastConnectionState = state;
+
+    if (state.apiKeyError && state.apiKeyError !== this.lastApiKeyError) {
+      new Notice(`EzRAG: ${state.apiKeyError}`);
+    }
+    this.lastApiKeyError = state.apiKeyError;
+
+    // Update status bar whenever connection state changes
     this.updateStatusBar(this.getStatusBarText());
-    return 'API key saved.';
+
+    // Auto-pause/resume indexing based on connection (only if runner)
+    if (!this.runnerManager?.isRunner() || !this.indexingController) {
+      return;
+    }
+
+    const isActive = this.indexingController.isActive();
+    const isPaused = this.indexingController.isPaused();
+
+    if (justLost && isActive && !isPaused) {
+      console.log('[EzRAG] Connection lost, pausing indexing');
+      this.indexingController.pause();
+      this.pausedByDisconnect = true;
+      new Notice('EzRAG: Disconnected. Indexing paused.');
+    } else if (justRestored) {
+      console.log('[EzRAG] Connection restored');
+      if (this.pausedByDisconnect && isPaused) {
+        this.indexingController.resume();
+        this.pausedByDisconnect = false;
+        new Notice('EzRAG: Connection restored. Resuming indexing.');
+      } else if (!isActive) {
+        void this.refreshIndexingState('connection');
+      }
+    }
   }
 
   async handleRunnerStateChange(): Promise<string> {
@@ -246,12 +411,14 @@ export default class EzRAGPlugin extends Plugin {
   private async refreshIndexingState(_source: string): Promise<string> {
     if (!Platform.isDesktopApp || !this.runnerManager) {
       this.indexingController?.stop();
+      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
       return 'Indexing is only available on desktop.';
     }
 
     if (!this.runnerManager.isRunner()) {
       this.indexingController?.stop();
+      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
       return 'Runner disabled. Indexing stopped.';
     }
@@ -259,6 +426,7 @@ export default class EzRAGPlugin extends Plugin {
     const ready = await this.ensureGeminiResources();
     if (!ready || !this.geminiService) {
       this.indexingController?.stop();
+      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
       return 'Runner enabled but waiting for API configuration.';
     }
@@ -290,6 +458,9 @@ export default class EzRAGPlugin extends Plugin {
     }
 
     if (!settings.storeName) {
+      if (!this.requireConnection('create a Gemini FileSearch store')) {
+        return false;
+      }
       const vaultName = this.app.vault.getName();
       const displayName = `ezrag-${vaultName}`;
 
@@ -314,6 +485,9 @@ export default class EzRAGPlugin extends Plugin {
    * Rebuild index
    */
   async rebuildIndex(): Promise<void> {
+    if (!this.requireConnection('rebuild the index')) {
+      return;
+    }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
       new Notice('Index manager not initialized');
@@ -336,6 +510,9 @@ export default class EzRAGPlugin extends Plugin {
    * Cleanup orphaned documents
    */
   async cleanupOrphans(): Promise<void> {
+    if (!this.requireConnection('clean up orphans')) {
+      return;
+    }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
       new Notice('Index manager not initialized');
@@ -363,6 +540,9 @@ export default class EzRAGPlugin extends Plugin {
    * Run remote index cleanup with UI
    */
   async runJanitorWithUI(): Promise<void> {
+    if (!this.requireConnection('clean up the remote index')) {
+      return;
+    }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
       new Notice('Index manager not initialized');

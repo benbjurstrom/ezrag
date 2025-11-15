@@ -22,6 +22,7 @@ export interface ChunkingConfig {
 
 export interface IndexState {
   docs: Record<string, IndexedDocState>; // Key: vaultPath
+  queue: IndexQueueEntry[];
 }
 
 export interface IndexedDocState {
@@ -34,6 +35,24 @@ export interface IndexedDocState {
   lastIndexedAt: number; // When we last indexed
   tags: string[]; // Extracted from frontmatter
   errorMessage?: string;
+}
+
+export type IndexQueueOperation = 'upload' | 'delete';
+
+export interface IndexQueueEntry {
+  id: string;
+  vaultPath: string;
+  operation: IndexQueueOperation;
+  /**
+   * Last known content hash for uploads. Used to avoid unnecessary work when
+   * files are modified again before the queue drains.
+   */
+  contentHash?: string;
+  /** Remote Gemini document name (used for delete jobs) */
+  remoteId?: string;
+  enqueuedAt: number;
+  attempts: number;
+  lastAttemptAt?: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -51,7 +70,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 export const DEFAULT_DATA: PersistedData = {
   version: 1,
   settings: DEFAULT_SETTINGS,
-  index: { docs: {} },
+  index: {
+    docs: {},
+    queue: [],
+  },
 };
 
 export interface GroundingChunk {
