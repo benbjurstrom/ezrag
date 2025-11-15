@@ -66,6 +66,11 @@ export default class EzRAGPlugin extends Plugin {
     // Add settings tab
     this.addSettingTab(new EzRAGSettingTab(this.app, this));
 
+    // Add ribbon icon for chat
+    this.addRibbonIcon('message-square', 'Open Chat', () => {
+      void this.openChatInterface();
+    });
+
     // Add status bar + subscribe to controller updates
     this.statusBarItem = this.addStatusBarItem();
     this.updateStatusBar(this.getStatusBarText());

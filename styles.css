@@ -49,15 +49,27 @@
   flex: 1;
 }
 
-.ezrag-model-label {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .ezrag-chat-model-switcher .dropdown {
   flex: 0 1 auto;
-  min-width: 100px;
+  min-width: 150px;
+}
+
+button.ezrag-chat-send {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+.ezrag-new-chat-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Messages area */
@@ -117,7 +129,6 @@
 
 /* Message bubbles */
 .ezrag-message-bubble {
-  max-width: 85%;
   padding: var(--size-4-3);
   border-radius: var(--radius-m);
 }
@@ -125,11 +136,13 @@
 .is-user .ezrag-message-bubble {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
+  max-width: 85%;
 }
 
 .is-assistant .ezrag-message-bubble {
   background: var(--background-secondary);
   color: var(--text-normal);
+  width: 100%;
 }
 
 /* Message content */
@@ -223,10 +236,12 @@
 .ezrag-chat-input-container {
   padding: var(--size-4-3);
   border-top: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  background: var(--background-secondary);
   display: flex;
   gap: var(--size-4-2);
   align-items: flex-end;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .ezrag-chat-input {
@@ -253,23 +268,17 @@
   color: var(--text-faint);
 }
 
-.ezrag-chat-send {
-  width: 36px;
+button.ezrag-chat-send {
   height: 36px;
-  padding: 0;
-  border: none;
+  padding: 0 12px;
+  border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.ezrag-chat-send:hover {
-  background: var(--interactive-accent-hover);
+  box-shadow: none;
 }
 
 .ezrag-chat-send:disabled {
@@ -278,14 +287,27 @@
 }
 
 .ezrag-chat-send svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Responsive: wider layouts */
 @media (min-width: 600px) {
-  .ezrag-message-bubble {
+  .is-user .ezrag-message-bubble {
     max-width: 75%;
+  }
+
+  .ezrag-message-row.is-assistant {
+    justify-content: center;
+  }
+
+  .is-assistant .ezrag-message-bubble {
+    width: auto;
+    max-width: 700px;
+  }
+
+  .ezrag-chat-input-container {
+    max-width: 700px;
   }
 
   .ezrag-empty-state {
@@ -294,8 +316,16 @@
 }
 
 @media (min-width: 900px) {
-  .ezrag-message-bubble {
+  .is-user .ezrag-message-bubble {
     max-width: 65%;
+  }
+
+  .is-assistant .ezrag-message-bubble {
+    max-width: 800px;
+  }
+
+  .ezrag-chat-input-container {
+    max-width: 800px;
   }
 }
 

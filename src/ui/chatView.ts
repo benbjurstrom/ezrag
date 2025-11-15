@@ -63,7 +63,7 @@ class SourceModal extends Modal {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 
       const ordered = line.match(/^\s*\d+\.\s(.*)/);
-      const unordered = line.match(/^\s*[\*\-]\s(.*)/);
+      const unordered = line.match(/^\s*[*-]\s(.*)/);
 
       if (ordered) {
         flushParagraph();
@@ -148,7 +148,7 @@ export class ChatView extends ItemView {
 
     // Header section with vault name and status
     this.headerEl = contentEl.createDiv('ezrag-chat-header');
-    const titleEl = this.headerEl.createEl('div', { cls: 'ezrag-chat-title' });
+    this.headerEl.createEl('div', { cls: 'ezrag-chat-title' });
     this.statusEl = this.headerEl.createEl('div', { cls: 'ezrag-chat-status' });
 
     // Action bar with model switcher and new chat
@@ -160,7 +160,7 @@ export class ChatView extends ItemView {
 
     // New chat button
     const newChatBtn = actionBar.createEl('button', {
-      cls: 'clickable-icon',
+      cls: 'ezrag-new-chat-btn',
       attr: { 'aria-label': 'New chat' }
     });
     setIcon(newChatBtn, 'file-plus');
@@ -206,23 +206,18 @@ export class ChatView extends ItemView {
   private buildModelSwitcher(): void {
     this.modelSwitcher.empty();
 
-    const label = this.modelSwitcher.createEl('span', {
-      cls: 'ezrag-model-label',
-      text: 'Model:'
-    });
-
     const select = this.modelSwitcher.createEl('select', {
       cls: 'dropdown'
     }) as HTMLSelectElement;
 
-    const flashOption = select.createEl('option', {
+    select.createEl('option', {
       value: 'gemini-2.5-flash',
-      text: 'Flash'
+      text: 'gemini-2.5-flash'
     });
 
-    const proOption = select.createEl('option', {
+    select.createEl('option', {
       value: 'gemini-2.5-pro',
-      text: 'Pro'
+      text: 'gemini-2.5-pro'
     });
 
     select.value = this.model;
@@ -369,7 +364,7 @@ export class ChatView extends ItemView {
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 
       const ordered = line.match(/^\s*\d+\.\s(.*)/);
-      const unordered = line.match(/^\s*[\*\-]\s(.*)/);
+      const unordered = line.match(/^\s*[*-]\s(.*)/);
 
       if (ordered) {
         flushParagraph();
