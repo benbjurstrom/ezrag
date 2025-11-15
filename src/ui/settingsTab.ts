@@ -21,14 +21,14 @@ export class EzRAGSettingTab extends PluginSettingTab {
     if (Platform.isDesktopApp) {
       containerEl.createEl('h3', { text: 'Runner Configuration' });
 
-      const runnerConfig = this.plugin.runnerManager!.getConfig();
-      const isRunner = runnerConfig.isRunner;
+      const runnerState = this.plugin.runnerManager!.getState();
+      const isRunner = runnerState.isRunner;
 
       new Setting(containerEl)
         .setName('This machine is the runner')
         .setDesc(
           'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
-          (runnerConfig.deviceName ? `Currently: ${runnerConfig.deviceName}` : '')
+          (runnerState.deviceId ? `Device ID: ${runnerState.deviceId.substring(0, 8)}...` : '')
         )
         .addToggle(toggle => toggle
           .setValue(isRunner)

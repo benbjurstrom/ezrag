@@ -1,106 +1,98 @@
 // src/runner/runnerState.ts - Per-machine runner configuration (non-synced)
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import * as crypto from 'crypto';
+import { App } from 'obsidian';
+import { computeVaultKey } from '../utils/vault';
 
-export interface RunnerConfig {
+export interface RunnerState {
   isRunner: boolean;
-  lastEnabledAt?: number;
-  deviceName?: string; // For user reference (hostname)
+  deviceId: string;
+  lastUpdated: number;
 }
 
-export class RunnerManager {
-  private configPath: string;
-  private config: RunnerConfig;
+const DEFAULT_RUNNER_STATE: RunnerState = {
+  isRunner: false,
+  deviceId: '',
+  lastUpdated: 0,
+};
 
-  constructor(pluginId: string, vaultPath: string) {
-    this.configPath = this.buildConfigPath(pluginId, vaultPath);
-    this.config = { isRunner: false };
+export class RunnerStateManager {
+  private readonly app: App;
+  private readonly pluginId: string;
+  private cachedState: RunnerState = { ...DEFAULT_RUNNER_STATE };
+  private readonly storageKey: string;
+
+  constructor(app: App, pluginId: string) {
+    this.app = app;
+    this.pluginId = pluginId;
+    this.storageKey = this.buildStorageKey();
+    this.cachedState = this.readFromStorage();
   }
 
-  async load(): Promise<void> {
-    try {
-      if (fs.existsSync(this.configPath)) {
-        const raw = await fs.promises.readFile(this.configPath, 'utf8');
-        this.config = JSON.parse(raw);
-      }
-    } catch (err) {
-      console.error('[RunnerManager] Failed to load config:', err);
-      this.config = { isRunner: false };
-    }
-  }
-
-  async save(): Promise<void> {
-    try {
-      // Ensure directory exists
-      const dir = path.dirname(this.configPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      const json = JSON.stringify(this.config, null, 2);
-      await fs.promises.writeFile(this.configPath, json, 'utf8');
-    } catch (err) {
-      console.error('[RunnerManager] Failed to save config:', err);
-    }
+  getState(): RunnerState {
+    return { ...this.cachedState };
   }
 
   isRunner(): boolean {
-    return this.config.isRunner;
+    return this.cachedState.isRunner;
   }
 
-  async setRunner(value: boolean): Promise<void> {
-    this.config.isRunner = value;
-    if (value) {
-      this.config.lastEnabledAt = Date.now();
-      this.config.deviceName = os.hostname();
-    }
-    await this.save();
+  async setRunner(enabled: boolean): Promise<void> {
+    const next: RunnerState = {
+      isRunner: enabled,
+      deviceId: this.cachedState.deviceId || this.generateDeviceId(),
+      lastUpdated: Date.now(),
+    };
+    this.cachedState = next;
+    this.writeToStorage(next);
   }
 
-  getConfig(): RunnerConfig {
-    return { ...this.config };
+  private buildStorageKey(): string {
+    const vaultKey = computeVaultKey(this.app);
+    return `ezrag.runner.${this.pluginId}.${vaultKey}`;
   }
 
-  private buildConfigPath(pluginId: string, vaultPath: string): string {
-    // Get Obsidian config directory by platform
-    const platform = process.platform;
-    let baseConfigDir: string;
-
-    if (platform === 'win32') {
-      baseConfigDir = path.join(
-        process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'),
-        'Obsidian'
-      );
-    } else if (platform === 'darwin') {
-      baseConfigDir = path.join(
-        os.homedir(),
-        'Library',
-        'Application Support',
-        'Obsidian'
-      );
-    } else {
-      // Linux
-      baseConfigDir = path.join(
-        process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'),
-        'Obsidian'
-      );
+  private readFromStorage(): RunnerState {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return { ...DEFAULT_RUNNER_STATE };
     }
 
-    // Create stable vault-specific key using hash
-    const vaultKey = this.hashVaultPath(vaultPath);
-
-    return path.join(baseConfigDir, 'plugins', pluginId, vaultKey, 'runner.json');
+    try {
+      const raw = window.localStorage.getItem(this.storageKey);
+      if (!raw) {
+        return { ...DEFAULT_RUNNER_STATE };
+      }
+      const parsed = JSON.parse(raw) as RunnerState;
+      if (!parsed || typeof parsed.isRunner !== 'boolean') {
+        return { ...DEFAULT_RUNNER_STATE };
+      }
+      return {
+        isRunner: parsed.isRunner,
+        deviceId: parsed.deviceId ?? '',
+        lastUpdated: parsed.lastUpdated ?? 0,
+      };
+    } catch (err) {
+      console.error('[RunnerStateManager] Failed to read runner state', err);
+      return { ...DEFAULT_RUNNER_STATE };
+    }
   }
 
-  private hashVaultPath(vaultPath: string): string {
-    // SHA-256 hash of vault path, take first 16 chars
-    return crypto
-      .createHash('sha256')
-      .update(vaultPath)
-      .digest('hex')
-      .substring(0, 16);
+  private writeToStorage(state: RunnerState): void {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(this.storageKey, JSON.stringify(state));
+    } catch (err) {
+      console.error('[RunnerStateManager] Failed to persist runner state', err);
+    }
+  }
+
+  private generateDeviceId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID();
+    }
+
+    return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
   }
 }

@@ -48,7 +48,7 @@ Build an Obsidian plugin that:
 │                     Obsidian Plugin                         │
 │  ┌────────────┐  ┌──────────────┐  ┌────────────────────┐  │
 │  │   Main     │  │   Settings   │  │  Chat Interface    │  │
-│  │ (main.ts)  │  │      UI      │  │   (future Phase 3) │  │
+│  │ (`main.ts`)  │  │      UI      │  │   (future Phase 3) │  │
 │  └─────┬──────┘  └──────┬───────┘  └──────────┬─────────┘  │
 │        │                │                     │             │
 │  ┌─────▼────────────────▼─────────────────────▼─────────┐  │
@@ -64,14 +64,14 @@ Build an Obsidian plugin that:
 │  └──────────────────────┬──────────────────────────────┘  │
 │                         │                                  │
 │  ┌──────────────────────▼──────────────────────────────┐  │
-│  │         Gemini Service (geminiService.ts)           │  │
+│  │         Gemini Service (`geminiService.ts`)           │  │
 │  │  • Store discovery/creation                         │  │
 │  │  • Document upload/delete (with pagination)         │  │
 │  │  • File Search queries                              │  │
 │  └──────────────────────┬──────────────────────────────┘  │
 │                         │                                  │
 │  ┌──────────────────────▼──────────────────────────────┐  │
-│  │         State Manager (state.ts)                    │  │
+│  │         State Manager (`state.ts`)                    │  │
 │  │  • PersistedData management (synced via vault)     │  │
 │  │  • IndexedDocState tracking                         │  │
 │  │  • loadData/saveData wrapper                        │  │
@@ -81,10 +81,10 @@ Build an Obsidian plugin that:
 ┌─────────────────────────────────────────────────────────────┐
 │           Runner State (per-machine, non-synced)            │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  RunnerManager (runnerState.ts)                        │ │
-│  │  • Stored outside vault (Obsidian config dir)         │ │
+│  │  RunnerStateManager (`runnerState.ts`)                 │ │
+│  │  • Stored in localStorage (browser-native)            │ │
 │  │  • Per-vault, per-machine isolation                   │ │
-│  │  • isRunner flag + device metadata                    │ │
+│  │  • isRunner flag + device ID + timestamp              │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 
@@ -94,7 +94,7 @@ Build an Obsidian plugin that:
 │  │  • Reads .obsidian/plugins/ezrag/data.json             │ │
 │  │  • Exposes keywordSearch tool                          │ │
 │  │  • Exposes semanticSearch tool (via Gemini)            │ │
-│  │  • Shares geminiService.ts and state.ts                │ │
+│  │  • Shares `geminiService.ts` and `state.ts`                │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -170,7 +170,7 @@ src/
 ├── main.ts                  # Plugin entry point
 ├── types.ts                 # Shared TypeScript interfaces
 ├── runner/
-│   └── runnerState.ts      # Per-machine runner configuration (non-synced)
+│   └── runnerState.ts      # Per-machine runner configuration (localStorage-based)
 ├── state/
 │   ├── state.ts            # State management (Obsidian-agnostic)
 │   └── stateManager.ts     # Obsidian-specific wrapper
@@ -193,80 +193,35 @@ src/
 │   └── server.ts           # MCP server (Phase 4)
 └── utils/
     ├── logger.ts           # Logging utility
-    └── metadata.ts         # Metadata builder
+    ├── metadata.ts         # Metadata builder
+    └── vault.ts            # Vault-specific utilities (vault key generation)
 ```
 
 ---
 
 ## 4. Data Models
 
-### PersistedData (state.ts)
+### PersistedData ([`state.ts`](src/state/state.ts))
 
-```typescript
-export interface PersistedData {
-  version: number;
-  settings: PluginSettings;
-  index: IndexState;
-}
+**File:** [`src/state/state.ts`](src/state/state.ts) and [`src/types.ts`](src/types.ts)
 
-export interface PluginSettings {
-  apiKey: string;
-  storeName: string; // Resource ID of the FileSearchStore
-  storeDisplayName: string; // Human-readable name (vault name)
-  includeFolders: string[]; // Empty = whole vault
-  maxConcurrentUploads: number; // Default: 2
-  chunkingConfig: ChunkingConfig; // Global chunking strategy
-}
-
-export interface ChunkingConfig {
-  maxTokensPerChunk: number; // Default: 400
-  maxOverlapTokens: number; // Default: 50
-}
-
-export interface IndexState {
-  docs: Record<string, IndexedDocState>; // Key: vaultPath
-}
-
-export interface IndexedDocState {
-  vaultPath: string; // e.g., "Projects/Notes.md"
-  geminiDocumentName: string | null; // e.g., "fileSearchStores/.../documents/..." (null if not yet uploaded)
-  contentHash: string; // SHA-256 of file content
-  pathHash: string; // SHA-256 of vaultPath (stable ID for metadata)
-  status: 'pending' | 'ready' | 'error';
-  lastLocalMtime: number; // File modification time
-  lastIndexedAt: number; // When we last indexed
-  tags: string[]; // Extracted from frontmatter
-  errorMessage?: string;
-}
-```
+**Implementation:** See [`src/types.ts`](src/types.ts) for all TypeScript interfaces:
+- `PersistedData` - Root data structure
+- `PluginSettings` - API key, store name, folders, concurrency, chunking config
+- `ChunkingConfig` - Token limits and overlap settings
+- `IndexState` - Map of vault paths to document states
+- `IndexedDocState` - Document tracking (path, hash, status, tags, etc.)
 
 ### Gemini Document Metadata
 
-When uploading a document, we'll attach this metadata:
+When uploading a document, we attach metadata with the following structure:
+- `obsidian_vault` - Vault name
+- `obsidian_path` - Full vault path
+- `obsidian_path_hash` - Hash of path (stable ID)
+- `tag` - Tags from frontmatter (multiple entries allowed)
+- `obsidian_mtime` - Last modified time
 
-```typescript
-interface DocumentMetadata {
-  obsidian_vault: string;      // Vault name
-  obsidian_path: string;        // Full vault path
-  obsidian_path_hash: string;   // Hash of path (stable ID)
-  tag: string[];                // Tags from frontmatter (multiple entries)
-  obsidian_mtime: number;       // Last modified time
-}
-```
-
-**Example:**
-```json
-{
-  "customMetadata": [
-    { "key": "obsidian_vault", "stringValue": "MyVault" },
-    { "key": "obsidian_path", "stringValue": "Projects/Client/Notes.md" },
-    { "key": "obsidian_path_hash", "stringValue": "a3f5..." },
-    { "key": "tag", "stringValue": "project" },
-    { "key": "tag", "stringValue": "client" },
-    { "key": "obsidian_mtime", "numericValue": 1699564800 }
-  ]
-}
-```
+**Example metadata structure:** See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method for how metadata is built and attached to documents.
 
 ---
 
@@ -274,19 +229,20 @@ interface DocumentMetadata {
 
 ### Phase 1: Core Infrastructure (Week 1)
 - [x] Project setup (already done: p-queue, @google/genai, MCP SDK)
-- [ ] State management (`state.ts`, `stateManager.ts`)
-- [ ] Runner state management (`runnerState.ts`) - **Desktop only**
-- [ ] Gemini service (`geminiService.ts`)
-- [ ] Hash utilities (`hashUtils.ts`)
+- [x] State management ([`state.ts`](src/state/state.ts))
+- [x] Runner state management ([`runnerState.ts`](src/runner/runnerState.ts)) - **localStorage-based, desktop only**
+- [x] Vault utilities ([`vault.ts`](src/utils/vault.ts)) - **Vault key generation**
+- [x] Gemini service ([`geminiService.ts`](src/gemini/geminiService.ts))
+- [x] Hash utilities ([`hashUtils.ts`](src/indexing/hashUtils.ts))
 - [ ] Basic settings UI (API key input + runner toggle)
 - [ ] Store discovery/creation
 
 **Deliverable:** Can create a store, persist basic settings, and configure runner (desktop only)
 
-**IMPORTANT:** Plugin works on both desktop and mobile, but runner (indexing) only available on desktop due to Node.js dependencies in RunnerManager
+**IMPORTANT:** Plugin works on both desktop and mobile, but runner (indexing) only available on desktop due to Node.js crypto dependency in hashing utilities
 
 ### Phase 2: Indexing Engine (Week 2)
-- [ ] Index manager (`indexManager.ts`)
+- [x] Index manager ([`indexManager.ts`](src/indexing/indexManager.ts))
 - [ ] Queue implementation (`queue.ts`)
 - [ ] Event handlers (create, modify, rename, delete)
 - [ ] Startup reconciliation (`reconciler.ts`)
@@ -315,42 +271,19 @@ interface DocumentMetadata {
 
 ## 6. Detailed Component Design
 
-### 6.1 Hash Utilities (`hashUtils.ts`)
+### 6.1 Hash Utilities & Vault Utilities
 
 **Desktop-only** - Uses Node.js crypto for synchronous, performant hashing.
 
 Since all hashing is used for indexing operations (which only run on the runner machine, which is desktop-only), we can use Node.js crypto throughout for simplicity and performance.
 
-```typescript
-// src/indexing/hashUtils.ts
-import * as crypto from 'crypto';
+**File:** [`src/indexing/hashUtils.ts`](src/indexing/hashUtils.ts)
 
-/**
- * Compute SHA-256 hash of content
- *
- * Uses Node.js crypto (synchronous) instead of Web Crypto (async).
- * This is simpler and more performant.
- *
- * Since hashing is only used during indexing (runner-only, desktop-only),
- * we don't need to support mobile/browser environments.
- */
-export function computeContentHash(content: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(content)
-    .digest('hex');
-}
+**Implementation:** See [`src/indexing/hashUtils.ts`](src/indexing/hashUtils.ts) for the complete implementation of `computeContentHash()` and `computePathHash()` functions.
 
-/**
- * Compute SHA-256 hash of path
- */
-export function computePathHash(path: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(path)
-    .digest('hex');
-}
-```
+**File:** [`src/utils/vault.ts`](src/utils/vault.ts)
+
+**Implementation:** See [`src/utils/vault.ts`](src/utils/vault.ts) for the `computeVaultKey()` function that generates stable vault identifiers for localStorage keys.
 
 **Benefits of Node.js crypto:**
 - ✅ **Synchronous**: No async/await needed, simplifies code
@@ -358,1026 +291,65 @@ export function computePathHash(path: string): string {
 - ✅ **Simpler**: Single import, consistent API
 - ✅ **Desktop-only is fine**: Hashing only happens during indexing (runner-only)
 
-**Usage pattern:**
-```typescript
-// Before (async, Web Crypto)
-const hash = await computeContentHash(content); // slow, complex
-
-// After (sync, Node crypto)
-const hash = computeContentHash(content); // fast, simple
-```
+**Usage pattern:** The functions are synchronous (no async/await needed), making them faster and simpler than Web Crypto alternatives.
 
 ---
 
-### 6.2 State Management (`state.ts`)
+### 6.2 State Management ([`state.ts`](src/state/state.ts))
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
 
-```typescript
-// src/state/state.ts
+**File:** [`src/state/state.ts`](src/state/state.ts) and [`src/types.ts`](src/types.ts)
 
-export interface PersistedData {
-  version: number;
-  settings: PluginSettings;
-  index: IndexState;
-}
+**Implementation:** See [`src/state/state.ts`](src/state/state.ts) for the `StateManager` class and [`src/types.ts`](src/types.ts) for all TypeScript interfaces (`PersistedData`, `PluginSettings`, `ChunkingConfig`, `IndexState`, `IndexedDocState`).
 
-export interface PluginSettings {
-  apiKey: string;
-  storeName: string;
-  storeDisplayName: string;
-  includeFolders: string[];
-  maxConcurrentUploads: number;
-  chunkingConfig: ChunkingConfig;
-}
-
-export interface ChunkingConfig {
-  maxTokensPerChunk: number;
-  maxOverlapTokens: number;
-}
-
-export interface IndexState {
-  docs: Record<string, IndexedDocState>;
-}
-
-export interface IndexedDocState {
-  vaultPath: string;
-  geminiDocumentName: string | null;
-  contentHash: string;
-  pathHash: string;
-  status: 'pending' | 'ready' | 'error';
-  lastLocalMtime: number;
-  lastIndexedAt: number;
-  tags: string[];
-  errorMessage?: string;
-}
-
-export const DEFAULT_SETTINGS: PluginSettings = {
-  apiKey: '',
-  storeName: '',
-  storeDisplayName: '',
-  includeFolders: [],
-  maxConcurrentUploads: 2,
-  chunkingConfig: {
-    maxTokensPerChunk: 400,
-    maxOverlapTokens: 50,
-  },
-};
-
-export const DEFAULT_DATA: PersistedData = {
-  version: 1,
-  settings: DEFAULT_SETTINGS,
-  index: { docs: {} },
-};
-
-export class StateManager {
-  private data: PersistedData;
-
-  constructor(initialData?: Partial<PersistedData>) {
-    this.data = { ...DEFAULT_DATA, ...initialData };
-  }
-
-  getSettings(): PluginSettings {
-    return this.data.settings;
-  }
-
-  updateSettings(updates: Partial<PluginSettings>): void {
-    this.data.settings = { ...this.data.settings, ...updates };
-  }
-
-  getDocState(vaultPath: string): IndexedDocState | undefined {
-    return this.data.index.docs[vaultPath];
-  }
-
-  setDocState(vaultPath: string, state: IndexedDocState): void {
-    this.data.index.docs[vaultPath] = state;
-  }
-
-  removeDocState(vaultPath: string): void {
-    delete this.data.index.docs[vaultPath];
-  }
-
-  getAllDocStates(): Record<string, IndexedDocState> {
-    return this.data.index.docs;
-  }
-
-  clearIndex(): void {
-    this.data.index.docs = {};
-  }
-
-  exportData(): PersistedData {
-    return structuredClone(this.data);
-  }
-}
-```
-
-### 6.3 Gemini Service (`geminiService.ts`)
+### 6.3 Gemini Service ([`geminiService.ts`](src/gemini/geminiService.ts))
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
 
-```typescript
-// src/gemini/geminiService.ts
-import { GoogleGenAI } from '@google/genai';
+**File:** [`src/gemini/geminiService.ts`](src/gemini/geminiService.ts)
 
-export interface CustomMetadataEntry {
-  key: string;
-  stringValue?: string;
-  numericValue?: number;
-}
+**Implementation:** See [`src/gemini/geminiService.ts`](src/gemini/geminiService.ts) for the complete `GeminiService` class implementation, including:
+- `getOrCreateStore()` - Find or create FileSearchStore by display name
+- `uploadDocument()` - Upload with polling until complete
+- `deleteDocument()` - Delete a document
+- `listDocuments()` - List all documents with pagination (max 20/page)
+- `fileSearch()` - Query FileSearchStore with metadata filters
+- `getStore()` - Get store details and stats
+- `listStores()` - List all stores for API key
+- `deleteStore()` - Delete a FileSearchStore
 
-export interface UploadDocumentParams {
-  storeName: string;
-  content: string;
-  displayName: string;
-  metadata: CustomMetadataEntry[];
-  mimeType?: string;
-  chunkingConfig?: ChunkingConfig;
-}
-
-export interface ChunkingConfig {
-  maxTokensPerChunk: number;
-  maxOverlapTokens: number;
-}
-
-export interface FileSearchResult {
-  text: string;
-  groundingChunks: any[];
-}
-
-export class GeminiService {
-  private ai: GoogleGenAI;
-
-  constructor(apiKey: string) {
-    this.ai = new GoogleGenAI({ apiKey });
-  }
-
-  /**
-   * Find or create a FileSearchStore by display name
-   */
-  async getOrCreateStore(displayName: string): Promise<string> {
-    // List all stores
-    const stores = await this.ai.fileSearchStores.list();
-
-    // Find matching store by displayName
-    for await (const store of stores) {
-      if (store.displayName === displayName) {
-        return store.name!;
-      }
-    }
-
-    // Create new store if not found
-    const newStore = await this.ai.fileSearchStores.create({
-      config: { displayName }
-    });
-
-    return newStore.name!;
-  }
-
-  /**
-   * Upload a document to a FileSearchStore
-   * Creates a temporary File, converts content to blob
-   * NOTE: Upload is considered complete when operation.done === true
-   * AND the document state is STATE_ACTIVE (or STATE_FAILED)
-   */
-  async uploadDocument(params: UploadDocumentParams): Promise<string> {
-    const { storeName, content, displayName, metadata, mimeType = 'text/markdown', chunkingConfig } = params;
-
-    // Convert content to a File-like object
-    const blob = new Blob([content], { type: mimeType });
-    const file = new File([blob], displayName, { type: mimeType });
-
-    // Build config with optional chunking
-    const config: any = {
-      displayName,
-      customMetadata: metadata,
-      mimeType,
-    };
-
-    if (chunkingConfig) {
-      config.chunkingConfig = {
-        whiteSpaceConfig: {
-          maxTokensPerChunk: chunkingConfig.maxTokensPerChunk,
-          maxOverlapTokens: chunkingConfig.maxOverlapTokens,
-        }
-      };
-    }
-
-    // Upload to FileSearchStore
-    let operation = await this.ai.fileSearchStores.uploadToFileSearchStore({
-      fileSearchStoreName: storeName,
-      file,
-      config,
-    });
-
-    // Poll until complete
-    while (!operation.done) {
-      await this.delay(3000);
-      operation = await this.ai.operations.get({ operation });
-    }
-
-    // Extract document name from operation response
-    if (operation.response?.['@type']?.includes('Document')) {
-      return operation.response.name as string;
-    }
-
-    throw new Error('Upload failed: no document name in response');
-  }
-
-  /**
-   * Delete a document from a FileSearchStore
-   */
-  async deleteDocument(documentName: string): Promise<void> {
-    await this.ai.fileSearchStores.documents.delete({
-      name: documentName,
-      config: { force: true }
-    });
-  }
-
-  /**
-   * List all documents in a store
-   *
-   * IMPORTANT: Handles pagination properly. The API has a maximum page size of 20 documents.
-   * For vaults with 1,000+ notes, this will make 50+ API calls to fetch all documents.
-   *
-   * Performance: Fetching 5,000 documents (250 pages) takes ~10-15 seconds.
-   * This is still much faster than 5,000 individual documents.get() calls.
-   *
-   * API Pagination:
-   * - Maximum pageSize: 20 documents per page
-   * - Default pageSize: 10 documents per page (if not specified)
-   * - Response contains: { documents: [], nextPageToken: string }
-   * - Loop continues while nextPageToken is present
-   */
-  async listDocuments(storeName: string): Promise<any[]> {
-    const allDocs: any[] = [];
-    let pageToken: string | undefined = undefined;
-
-    do {
-      const response = await this.ai.fileSearchStores.documents.list({
-        parent: storeName,
-        config: {
-          pageSize: 20, // Maximum allowed by API
-          pageToken: pageToken
-        }
-      });
-
-      // Collect documents from this page
-      // SDK returns an async iterable, iterate through all documents
-      for await (const doc of response) {
-        allDocs.push(doc);
-      }
-
-      // Get next page token from response
-      // If nextPageToken is present, there are more pages to fetch
-      pageToken = response.nextPageToken;
-
-    } while (pageToken);
-
-    return allDocs;
-  }
-
-  /**
-   * Query the FileSearchStore
-   */
-  async fileSearch(storeName: string, query: string): Promise<FileSearchResult> {
-    const response = await this.ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: query,
-      config: {
-        tools: [
-          {
-            fileSearch: {
-              fileSearchStoreNames: [storeName]
-            }
-          }
-        ]
-      }
-    });
-
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-
-    return {
-      text: response.text || '',
-      groundingChunks
-    };
-  }
-
-  /**
-   * Get FileSearchStore details (including stats)
-   */
-  async getStore(storeName: string): Promise<any> {
-    return await this.ai.fileSearchStores.get({
-      name: storeName
-    });
-  }
-
-  /**
-   * List all FileSearchStores for this API key
-   */
-  async listStores(): Promise<any[]> {
-    const stores: any[] = [];
-    const response = await this.ai.fileSearchStores.list();
-
-    for await (const store of response) {
-      stores.push(store);
-    }
-
-    return stores;
-  }
-
-  /**
-   * Delete a FileSearchStore
-   */
-  async deleteStore(storeName: string): Promise<void> {
-    await this.ai.fileSearchStores.delete({
-      name: storeName,
-      config: { force: true }
-    });
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-}
-```
-
-### 6.4 Index Manager (`indexManager.ts`)
+### 6.4 Index Manager ([`indexManager.ts`](src/indexing/indexManager.ts))
 
 Orchestrates all indexing operations.
 
-```typescript
-// src/indexing/indexManager.ts
-import PQueue from 'p-queue';
-import { StateManager, IndexedDocState, computeContentHash, computePathHash } from '../state/state';
-import { GeminiService } from '../gemini/geminiService';
-import { App, TFile, Vault } from 'obsidian';
-
-export interface IndexManagerOptions {
-  vault: Vault;
-  app: App; // For MetadataCache access
-  stateManager: StateManager;
-  geminiService: GeminiService;
-  vaultName: string;
-  onProgress?: (current: number, total: number, status: string) => void;
-}
-
-export class IndexManager {
-  private vault: Vault;
-  private app: App;
-  private state: StateManager;
-  private gemini: GeminiService;
-  private vaultName: string;
-  private queue: PQueue;
-  private janitor: Janitor;
-  private onProgress?: (current: number, total: number, status: string) => void;
-
-  private stats = {
-    total: 0,
-    completed: 0,
-    failed: 0,
-    pending: 0,
-  };
-
-  constructor(options: IndexManagerOptions) {
-    this.vault = options.vault;
-    this.app = options.app;
-    this.state = options.stateManager;
-    this.gemini = options.geminiService;
-    this.vaultName = options.vaultName;
-    this.onProgress = options.onProgress;
-
-    const settings = this.state.getSettings();
-    this.queue = new PQueue({ concurrency: settings.maxConcurrentUploads });
-
-    // Initialize Janitor
-    this.janitor = new Janitor({
-      geminiService: this.gemini,
-      stateManager: this.state,
-      storeName: settings.storeName,
-      onProgress: (msg) => console.log(`[Janitor] ${msg}`),
-    });
-  }
-
-  /**
-   * Startup reconciliation: scan all files and queue changed ones
-   * Note: Does not wait for queue to finish - jobs run in background
-   */
-  async reconcileOnStartup(): Promise<void> {
-    const files = this.getIndexableFiles();
-
-    this.stats.total = files.length;
-    this.stats.completed = 0;
-    this.stats.failed = 0;
-    this.stats.pending = 0;
-
-    // Scan all files and queue those that need indexing
-    // Read and hash once to avoid double-read later
-    for (const file of files) {
-      try {
-        const content = await this.vault.read(file);
-        const contentHash = computeContentHash(content); // Synchronous now
-
-        const state = this.state.getDocState(file.path);
-
-        // Determine if indexing is needed
-        const needsIndexing = !state ||
-                              state.contentHash !== contentHash ||
-                              state.status === 'error';
-
-        if (needsIndexing) {
-          this.stats.pending++;
-          this.queueIndexJob(file, content, contentHash);
-        }
-      } catch (err) {
-        console.error(`Failed to scan ${file.path}:`, err);
-      }
-    }
-
-    // Don't await queue.onIdle() - let jobs run in background
-    // Progress updates happen via onProgress callback
-    this.updateProgress('Indexing');
-  }
-
-  /**
-   * Handle file creation
-   */
-  async onFileCreated(file: TFile): Promise<void> {
-    if (!this.isMarkdownFile(file) || !this.isInIncludedFolders(file)) {
-      return;
-    }
-
-    // Read and hash once
-    try {
-      const content = await this.vault.read(file);
-      const contentHash = computeContentHash(content); // Synchronous now
-      this.queueIndexJob(file, content, contentHash);
-    } catch (err) {
-      console.error(`Failed to queue new file ${file.path}:`, err);
-    }
-  }
-
-  /**
-   * Handle file modification
-   */
-  async onFileModified(file: TFile): Promise<void> {
-    if (!this.isMarkdownFile(file) || !this.isInIncludedFolders(file)) {
-      return;
-    }
-
-    try {
-      const content = await this.vault.read(file);
-      const contentHash = computeContentHash(content); // Synchronous now
-
-      const state = this.state.getDocState(file.path);
-
-      // Only queue if content actually changed
-      if (!state || state.contentHash !== contentHash || state.status === 'error') {
-        this.queueIndexJob(file, content, contentHash);
-      }
-    } catch (err) {
-      console.error(`Failed to check ${file.path}:`, err);
-    }
-  }
-
-  /**
-   * Handle file rename
-   */
-  async onFileRenamed(file: TFile, oldPath: string): Promise<void> {
-    if (!this.isMarkdownFile(file)) {
-      return;
-    }
-
-    // Delete old document if it exists
-    const oldState = this.state.getDocState(oldPath);
-    if (oldState?.geminiDocumentName) {
-      try {
-        await this.gemini.deleteDocument(oldState.geminiDocumentName);
-      } catch (err) {
-        console.error(`Failed to delete old document for ${oldPath}:`, err);
-      }
-    }
-
-    // Remove old state
-    this.state.removeDocState(oldPath);
-
-    // Queue new path for indexing if in included folders
-    if (this.isInIncludedFolders(file)) {
-      this.queueIndexJob(file);
-    }
-  }
-
-  /**
-   * Handle file deletion
-   */
-  async onFileDeleted(path: string): Promise<void> {
-    const state = this.state.getDocState(path);
-    if (!state) return;
-
-    // Delete from Gemini
-    if (state.geminiDocumentName) {
-      try {
-        await this.gemini.deleteDocument(state.geminiDocumentName);
-      } catch (err) {
-        console.error(`Failed to delete document for ${path}:`, err);
-      }
-    }
-
-    // Remove from state
-    this.state.removeDocState(path);
-  }
-
-  /**
-   * Manual rebuild: clear index and requeue everything
-   */
-  async rebuildIndex(): Promise<void> {
-    this.state.clearIndex();
-    await this.reconcileOnStartup();
-  }
-
-  /**
-   * Cleanup orphaned documents (exist in Gemini but not in vault)
-   */
-  async cleanupOrphans(): Promise<void> {
-    const settings = this.state.getSettings();
-    if (!settings.storeName) {
-      throw new Error('No store configured');
-    }
-
-    const remoteDocs = await this.gemini.listDocuments(settings.storeName);
-    let deleted = 0;
-
-    for (const doc of remoteDocs) {
-      // Check if this document is owned by us (has obsidian_path metadata)
-      const pathMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path');
-      if (!pathMeta) continue; // Not our document
-
-      const vaultPath = pathMeta.stringValue;
-
-      // Check if file exists in vault
-      const file = this.vault.getAbstractFileByPath(vaultPath);
-      if (!file) {
-        // Orphan: delete it
-        try {
-          await this.gemini.deleteDocument(doc.name);
-          this.state.removeDocState(vaultPath);
-          deleted++;
-        } catch (err) {
-          console.error(`Failed to delete orphan ${doc.name}:`, err);
-        }
-      }
-    }
-
-    return deleted;
-  }
-
-  /**
-   * Private: Queue a job to index a file
-   * Accepts pre-read content and hash to avoid double-reading
-   *
-   * Includes retry logic with exponential backoff for transient errors
-   */
-  private queueIndexJob(file: TFile, content: string, contentHash: string): void {
-    this.queue.add(async () => {
-      const maxRetries = 3;
-      let lastError: Error | null = null;
-
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          await this.indexFile(file, content, contentHash);
-          this.stats.completed++;
-          return; // Success, exit retry loop
-        } catch (err) {
-          lastError = err as Error;
-
-          // Check if error is retryable (network, rate limit, etc.)
-          const isRetryable = this.isRetryableError(err);
-
-          if (!isRetryable || attempt === maxRetries - 1) {
-            // Not retryable or final attempt, fail permanently
-            break;
-          }
-
-          // Exponential backoff: 2^attempt * 1000ms (1s, 2s, 4s)
-          const delay = Math.pow(2, attempt) * 1000;
-          console.log(`Retry ${attempt + 1}/${maxRetries} for ${file.path} after ${delay}ms`);
-          await this.delay(delay);
-        }
-      }
-
-      // All retries failed
-      this.stats.failed++;
-      console.error(`Failed to index ${file.path} after ${maxRetries} attempts:`, lastError);
-
-      // Mark as error in state
-      const state = this.state.getDocState(file.path);
-      if (state) {
-        state.status = 'error';
-        state.errorMessage = lastError?.message || 'Unknown error';
-        this.state.setDocState(file.path, state);
-      }
-
-      this.stats.pending--;
-      this.updateProgress('Indexing');
-    });
-  }
-
-  /**
-   * Private: Check if an error is retryable
-   */
-  private isRetryableError(err: any): boolean {
-    // Network errors, timeouts, rate limits are retryable
-    const message = err?.message?.toLowerCase() || '';
-
-    return (
-      message.includes('network') ||
-      message.includes('timeout') ||
-      message.includes('rate limit') ||
-      message.includes('429') ||
-      message.includes('503') ||
-      message.includes('econnreset') ||
-      message.includes('enotfound')
-    );
-  }
-
-  /**
-   * Private: Delay helper
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Private: Index a single file
-   * Accepts pre-read content and hash to avoid re-reading
-   *
-   * SYNC CONFLICT PREVENTION: If local state has no ID, checks remote for existing document
-   * before creating a new one. This prevents duplicates during multi-device sync.
-   */
-  private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
-    const pathHash = computePathHash(file.path); // Synchronous now
-    const settings = this.state.getSettings();
-
-    // Extract tags from frontmatter using MetadataCache
-    const tags = this.extractTags(file);
-
-    // Build metadata
-    const metadata = [
-      { key: 'obsidian_vault', stringValue: this.vaultName },
-      { key: 'obsidian_path', stringValue: file.path },
-      { key: 'obsidian_path_hash', stringValue: pathHash },
-      { key: 'obsidian_mtime', numericValue: file.stat.mtime },
-      ...tags.map(tag => ({ key: 'tag', stringValue: tag })),
-    ];
-
-    // Check if local state has a document ID
-    const existingState = this.state.getDocState(file.path);
-    let geminiDocumentName = existingState?.geminiDocumentName;
-
-    // SYNC CONFLICT PREVENTION: If no local ID, check if remote document exists
-    if (!geminiDocumentName) {
-      geminiDocumentName = await this.janitor.findExistingDocument(pathHash);
-
-      if (geminiDocumentName) {
-        // Remote document exists! This is a stale local state situation.
-        // Adopt the remote ID instead of creating a duplicate.
-        console.log(`[IndexManager] Adopting existing document for ${file.path}: ${geminiDocumentName}`);
-      }
-    }
-
-    // Delete old document if exists
-    if (geminiDocumentName) {
-      try {
-        await this.gemini.deleteDocument(geminiDocumentName);
-      } catch (err) {
-        // Document may have been deleted by janitor or doesn't exist, ignore
-        console.log(`[IndexManager] Document already deleted or not found: ${geminiDocumentName}`);
-      }
-    }
-
-    // Upload new document with chunking config
-    const documentName = await this.gemini.uploadDocument({
-      storeName: settings.storeName,
-      content,
-      displayName: file.path,
-      metadata,
-      mimeType: 'text/markdown',
-      chunkingConfig: settings.chunkingConfig,
-    });
-
-    // Update state
-    const newState: IndexedDocState = {
-      vaultPath: file.path,
-      geminiDocumentName: documentName,
-      contentHash,
-      pathHash,
-      status: 'ready',
-      lastLocalMtime: file.stat.mtime,
-      lastIndexedAt: Date.now(),
-      tags,
-    };
-
-    this.state.setDocState(file.path, newState);
-  }
-
-  /**
-   * Private: Get all indexable files
-   */
-  private getIndexableFiles(): TFile[] {
-    const allFiles = this.vault.getMarkdownFiles();
-    return allFiles.filter(file => this.isInIncludedFolders(file));
-  }
-
-  /**
-   * Private: Check if file is in included folders
-   */
-  private isInIncludedFolders(file: TFile): boolean {
-    const settings = this.state.getSettings();
-
-    // Empty = include all
-    if (settings.includeFolders.length === 0) return true;
-
-    // Check if file path starts with any included folder
-    return settings.includeFolders.some(folder =>
-      file.path.startsWith(folder + '/') || file.path === folder
-    );
-  }
-
-  /**
-   * Private: Check if file is markdown
-   */
-  private isMarkdownFile(file: TFile): boolean {
-    return file.extension === 'md';
-  }
-
-  /**
-   * Private: Extract tags from frontmatter using MetadataCache
-   */
-  private extractTags(file: TFile): string[] {
-    // Use MetadataCache - already parsed, cached, and handles YAML edge cases
-    const cache = this.app.metadataCache.getFileCache(file);
-    if (!cache?.frontmatter?.tags) return [];
-
-    const tags = cache.frontmatter.tags;
-
-    // Tags can be: string | string[] | undefined
-    if (typeof tags === 'string') return [tags];
-    if (Array.isArray(tags)) return tags;
-
-    return [];
-  }
-
-  /**
-   * Private: Update progress
-   */
-  private updateProgress(status: string): void {
-    if (this.onProgress) {
-      this.onProgress(this.stats.completed, this.stats.total, status);
-    }
-  }
-}
-```
-
-### 6.4 Settings UI (`settingsTab.ts`)
-
-```typescript
-// src/ui/settingsTab.ts
-import { App, Platform, PluginSettingTab, Setting } from 'obsidian';
-import EzRAGPlugin from '../main';
-
-export class EzRAGSettingTab extends PluginSettingTab {
-  plugin: EzRAGPlugin;
-
-  constructor(app: App, plugin: EzRAGPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    containerEl.createEl('h2', { text: 'EzRAG Settings' });
-
-    // Runner Configuration Section (Desktop only)
-    if (Platform.isDesktopApp) {
-      containerEl.createEl('h3', { text: 'Runner Configuration' });
-
-      const runnerConfig = this.plugin.runnerManager.getConfig();
-      const isRunner = runnerConfig.isRunner;
-
-      new Setting(containerEl)
-        .setName('This machine is the runner')
-        .setDesc(
-          'Enable indexing on this machine. Only ONE machine per vault should be the runner. ' +
-          (runnerConfig.deviceName ? `Currently: ${runnerConfig.deviceName}` : '')
-        )
-        .addToggle(toggle => toggle
-          .setValue(isRunner)
-          .onChange(async (value) => {
-            await this.plugin.runnerManager.setRunner(value);
-
-            // If enabling runner, initialize services
-            if (value && this.plugin.stateManager.getSettings().apiKey) {
-            await this.plugin.initializeServices();
-          }
-
-          // If disabling runner, clear services
-          if (!value) {
-            this.plugin.indexManager = null;
-            this.plugin.geminiService = null;
-          }
-
-          // Refresh settings display
-          this.display();
-
-          new Notice(
-            value
-              ? 'This machine is now the runner. Indexing will start automatically.'
-              : 'Runner disabled. This machine will no longer index files.'
-          );
-        })
-      );
-
-      // If not runner, show message and hide remaining settings
-      if (!isRunner) {
-        containerEl.createDiv({
-          cls: 'setting-item-description',
-          text: 'Indexing controls are hidden because this machine is not the runner. ' +
-                'Enable "This machine is the runner" above to access indexing settings.'
-        });
-        return; // Early return - hide all other settings
-      }
-
-      // Separator
-      containerEl.createEl('hr');
-    } else {
-      // Mobile platform - runner not available
-      containerEl.createEl('h3', { text: 'Mobile Platform' });
-      containerEl.createDiv({
-        cls: 'setting-item-description',
-        text: 'Indexing is not available on mobile devices. The runner can only be enabled on desktop. ' +
-              'You can still use chat and query features once they are implemented.'
-      });
-      return; // Early return - no indexing settings on mobile
-    }
-
-    // API Key Section
-    containerEl.createEl('h3', { text: 'API Configuration' });
-
-    new Setting(containerEl)
-      .setName('Gemini API Key')
-      .setDesc('Your Google Gemini API key (get it from ai.google.dev)')
-      .addText(text => text
-        .setPlaceholder('Enter your API key')
-        .setValue(this.plugin.stateManager.getSettings().apiKey)
-        .onChange(async (value) => {
-          this.plugin.stateManager.updateSettings({ apiKey: value });
-          await this.plugin.saveState();
-
-          // Re-initialize services if runner
-          if (isRunner && value) {
-            await this.plugin.initializeServices();
-          }
-        })
-      );
-
-    // Included Folders
-    new Setting(containerEl)
-      .setName('Included Folders')
-      .setDesc('Comma-separated list of folders to index (empty = entire vault)')
-      .addText(text => text
-        .setPlaceholder('e.g., Projects, Notes')
-        .setValue(this.plugin.stateManager.getSettings().includeFolders.join(', '))
-        .onChange(async (value) => {
-          const folders = value.split(',').map(f => f.trim()).filter(Boolean);
-          this.plugin.stateManager.updateSettings({ includeFolders: folders });
-          await this.plugin.saveState();
-        })
-      );
-
-    // Concurrency
-    new Setting(containerEl)
-      .setName('Upload Concurrency')
-      .setDesc('Number of concurrent uploads (1-5). Each upload polls until complete.')
-      .addSlider(slider => slider
-        .setLimits(1, 5, 1)
-        .setValue(this.plugin.stateManager.getSettings().maxConcurrentUploads)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.stateManager.updateSettings({ maxConcurrentUploads: value });
-          await this.plugin.saveState();
-        })
-      );
-
-    // Chunking Configuration Section
-    containerEl.createEl('h3', { text: 'Chunking Strategy' });
-
-    new Setting(containerEl)
-      .setName('Max Tokens Per Chunk')
-      .setDesc('Maximum number of tokens in each chunk (100-1000)')
-      .addSlider(slider => slider
-        .setLimits(100, 1000, 50)
-        .setValue(this.plugin.stateManager.getSettings().chunkingConfig.maxTokensPerChunk)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          const config = this.plugin.stateManager.getSettings().chunkingConfig;
-          this.plugin.stateManager.updateSettings({
-            chunkingConfig: { ...config, maxTokensPerChunk: value }
-          });
-          await this.plugin.saveState();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName('Max Overlap Tokens')
-      .setDesc('Number of overlapping tokens between chunks (0-200)')
-      .addSlider(slider => slider
-        .setLimits(0, 200, 10)
-        .setValue(this.plugin.stateManager.getSettings().chunkingConfig.maxOverlapTokens)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          const config = this.plugin.stateManager.getSettings().chunkingConfig;
-          this.plugin.stateManager.updateSettings({
-            chunkingConfig: { ...config, maxOverlapTokens: value }
-          });
-          await this.plugin.saveState();
-        })
-      );
-
-    // Manual Commands Section
-    containerEl.createEl('h3', { text: 'Manual Actions' });
-
-    // Rebuild Index
-    new Setting(containerEl)
-      .setName('Rebuild Index')
-      .setDesc('Clear local index and re-index all files')
-      .addButton(button => button
-        .setButtonText('Rebuild')
-        .onClick(async () => {
-          await this.plugin.rebuildIndex();
-        })
-      );
-
-    // Run Deduplication (Manual Janitor)
-    new Setting(containerEl)
-      .setName('Run Deduplication')
-      .setDesc('Find and remove duplicate documents created by multi-device sync conflicts')
-      .addButton(button => button
-        .setButtonText('Run Deduplication')
-        .onClick(async () => {
-          await this.plugin.runJanitorWithUI();
-        })
-      );
-
-    // Store Management Section
-    containerEl.createEl('h3', { text: 'Store Management' });
-
-    // Current Store Stats
-    new Setting(containerEl)
-      .setName('Current Store Stats')
-      .setDesc('View statistics for the current vault\'s FileSearchStore')
-      .addButton(button => button
-        .setButtonText('View Stats')
-        .onClick(async () => {
-          await this.plugin.showStoreStats();
-        })
-      );
-
-    // List All Stores
-    new Setting(containerEl)
-      .setName('List All Stores')
-      .setDesc('View all FileSearchStores associated with this API key')
-      .addButton(button => button
-        .setButtonText('List Stores')
-        .onClick(async () => {
-          await this.plugin.listAllStores();
-        })
-      );
-
-    // Delete Current Store
-    new Setting(containerEl)
-      .setName('Delete Current Store')
-      .setDesc('Permanently delete the FileSearchStore for this vault (cannot be undone!)')
-      .addButton(button => button
-        .setButtonText('Delete Store')
-        .setWarning()
-        .onClick(async () => {
-          await this.plugin.deleteCurrentStore();
-        })
-      );
-
-    // Status Display
-    containerEl.createEl('h3', { text: 'Index Status' });
-
-    const stats = this.plugin.getIndexStats();
-    const statusEl = containerEl.createDiv({ cls: 'ezrag-status' });
-    statusEl.createEl('p', { text: `Total documents: ${stats.total}` });
-    statusEl.createEl('p', { text: `Ready: ${stats.ready}` });
-    statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
-    statusEl.createEl('p', { text: `Error: ${stats.error}` });
-  }
-}
-```
+**File:** [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts)
+
+**Implementation:** See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) for the complete `IndexManager` class, including:
+- `reconcileOnStartup()` - Scan all files and queue changed ones
+- `onFileCreated()` - Handle file creation events
+- `onFileModified()` - Handle file modification with hash-based change detection
+- `onFileRenamed()` - Handle file rename (delete old, index new)
+- `onFileDeleted()` - Handle file deletion
+- `rebuildIndex()` - Manual rebuild (clear state and reindex)
+- `cleanupOrphans()` - Remove documents that exist in Gemini but not in vault
+- `queueIndexJob()` - Queue with retry logic (exponential backoff)
+- `indexFile()` - Core indexing logic with sync conflict prevention
+- `extractTags()` - Extract tags from frontmatter using MetadataCache
+
+### 6.4 Settings UI ([`settingsTab.ts`](src/ui/settingsTab.ts))
+
+**File:** [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts)
+
+**Implementation:** See [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts) for the complete `EzRAGSettingTab` class, including:
+- Runner configuration toggle (desktop only)
+- API key input
+- Included folders setting
+- Upload concurrency slider
+- Chunking configuration (max tokens, overlap)
+- Manual actions (rebuild index, run deduplication)
+- Store management (view stats, list stores, delete store)
+- Index status display
 
 ### 6.6 Runner Pattern for Multi-Device Vaults
 
@@ -1386,133 +358,42 @@ export class EzRAGSettingTab extends PluginSettingTab {
 - Multiple devices run Janitor → wasted API calls
 - Race conditions when both devices try to index the same file change
 
-**Solution:** Store per-machine, per-vault runner state **outside** the vault (not synced).
+**Solution:** Store per-machine, per-vault runner state in **localStorage** (browser-native, not synced).
 
-#### Why Store Outside Vault
+#### Why Use localStorage
 
 Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local state that does **not** sync:
 
-**Storage location:**
-```
-<obsidian-config-dir>/plugins/ezrag/<vault-hash>/runner.json
-```
+**Storage mechanism:**
+- Uses browser's `window.localStorage` API
+- Storage key format: `ezrag.runner.<pluginId>.<vaultKey>`
+- Vault key: SHA-256 hash of vault path (first 16 chars)
 
-**Paths by platform:**
-- Windows: `%APPDATA%\Obsidian\plugins\ezrag\<vault-hash>\runner.json`
-- macOS: `~/Library/Application Support/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
-- Linux: `~/.config/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
+**Benefits of localStorage:**
+- ✅ **Browser-native**: No filesystem dependencies
+- ✅ **Synchronous**: Instant read/write, no async needed
+- ✅ **Per-origin**: Isolated by Obsidian instance
+- ✅ **Vault-isolated**: Hash-based key prevents cross-vault conflicts
+- ✅ **Simpler API**: Single read/write, no directory management
 
-**Vault isolation:** Hash vault path to create stable directory name per vault.
+**Vault isolation:** Hash vault path using `computeVaultKey()` to create stable key per vault.
 
-#### RunnerManager Implementation
+#### RunnerStateManager Implementation
 
-```typescript
-// src/runner/runnerState.ts
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import * as crypto from 'crypto';
+**File:** [`src/runner/runnerState.ts`](src/runner/runnerState.ts)
 
-export interface RunnerConfig {
-  isRunner: boolean;
-  lastEnabledAt?: number;
-  deviceName?: string; // For user reference (hostname)
-}
+**Implementation:** See [`src/runner/runnerState.ts`](src/runner/runnerState.ts) for the complete `RunnerStateManager` class, including:
+- Constructor loads state synchronously from localStorage
+- `isRunner()` - Check if this machine is the runner
+- `setRunner()` - Enable/disable runner status (async for consistency)
+- `getState()` - Get current state snapshot
+- `buildStorageKey()` - Build vault-specific localStorage key
+- `readFromStorage()` - Read and parse state from localStorage
+- `writeToStorage()` - Serialize and save state to localStorage
+- `generateDeviceId()` - Create unique device identifier (UUID or timestamp-based)
 
-export class RunnerManager {
-  private configPath: string;
-  private config: RunnerConfig;
-
-  constructor(pluginId: string, vaultPath: string) {
-    this.configPath = this.buildConfigPath(pluginId, vaultPath);
-    this.config = { isRunner: false };
-  }
-
-  async load(): Promise<void> {
-    try {
-      if (fs.existsSync(this.configPath)) {
-        const raw = await fs.promises.readFile(this.configPath, 'utf8');
-        this.config = JSON.parse(raw);
-      }
-    } catch (err) {
-      console.error('[RunnerManager] Failed to load config:', err);
-      this.config = { isRunner: false };
-    }
-  }
-
-  async save(): Promise<void> {
-    try {
-      // Ensure directory exists
-      const dir = path.dirname(this.configPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      const json = JSON.stringify(this.config, null, 2);
-      await fs.promises.writeFile(this.configPath, json, 'utf8');
-    } catch (err) {
-      console.error('[RunnerManager] Failed to save config:', err);
-    }
-  }
-
-  isRunner(): boolean {
-    return this.config.isRunner;
-  }
-
-  async setRunner(value: boolean): Promise<void> {
-    this.config.isRunner = value;
-    if (value) {
-      this.config.lastEnabledAt = Date.now();
-      this.config.deviceName = os.hostname();
-    }
-    await this.save();
-  }
-
-  getConfig(): RunnerConfig {
-    return { ...this.config };
-  }
-
-  private buildConfigPath(pluginId: string, vaultPath: string): string {
-    // Get Obsidian config directory by platform
-    const platform = process.platform;
-    let baseConfigDir: string;
-
-    if (platform === 'win32') {
-      baseConfigDir = path.join(
-        process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'),
-        'Obsidian'
-      );
-    } else if (platform === 'darwin') {
-      baseConfigDir = path.join(
-        os.homedir(),
-        'Library',
-        'Application Support',
-        'Obsidian'
-      );
-    } else {
-      // Linux
-      baseConfigDir = path.join(
-        process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'),
-        'Obsidian'
-      );
-    }
-
-    // Create stable vault-specific key using hash
-    const vaultKey = this.hashVaultPath(vaultPath);
-
-    return path.join(baseConfigDir, 'plugins', pluginId, vaultKey, 'runner.json');
-  }
-
-  private hashVaultPath(vaultPath: string): string {
-    // SHA-256 hash of vault path, take first 16 chars
-    return crypto
-      .createHash('sha256')
-      .update(vaultPath)
-      .digest('hex')
-      .substring(0, 16);
-  }
-}
-```
+**Vault utility:** [`src/utils/vault.ts`](src/utils/vault.ts)
+- `computeVaultKey()` - Generate stable vault identifier using SHA-256 hash
 
 #### Runner Behavior
 
@@ -1538,878 +419,52 @@ export class RunnerManager {
 
 **Manual deduplication UI** shown when user clicks "Run Deduplication" in settings.
 
-```typescript
-// src/ui/janitorProgressModal.ts
-import { App, Modal, Notice } from 'obsidian';
-import { JanitorStats } from '../indexing/janitor';
+**File:** [`src/ui/janitorProgressModal.ts`](src/ui/janitorProgressModal.ts)
 
-export class JanitorProgressModal extends Modal {
-  private stats: JanitorStats;
-  private phaseEl!: HTMLElement;
-  private progressEl!: HTMLElement;
-  private statsEl!: HTMLElement;
-  private currentActionEl!: HTMLElement;
-  private closeButtonEl!: HTMLButtonElement;
-  private isDone: boolean = false;
-
-  constructor(app: App) {
-    super(app);
-    this.stats = {
-      totalRemoteDocs: 0,
-      duplicatesFound: 0,
-      duplicatesDeleted: 0,
-      stateUpdated: 0,
-      orphansDeleted: 0,
-    };
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    contentEl.createEl('h2', { text: 'Deduplication Progress' });
-
-    // Phase indicator
-    this.phaseEl = contentEl.createDiv({ cls: 'janitor-phase' });
-
-    // Progress summary
-    this.progressEl = contentEl.createDiv({ cls: 'janitor-progress' });
-
-    // Stats display
-    this.statsEl = contentEl.createDiv({ cls: 'janitor-stats' });
-
-    // Current action
-    this.currentActionEl = contentEl.createDiv({ cls: 'janitor-current' });
-
-    // Close button (disabled until complete)
-    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
-    this.closeButtonEl = buttonContainer.createEl('button', { text: 'Close' });
-    this.closeButtonEl.disabled = true;
-    this.closeButtonEl.addEventListener('click', () => this.close());
-
-    this.render();
-  }
-
-  updateStats(stats: Partial<JanitorStats>, currentAction?: string) {
-    this.stats = { ...this.stats, ...stats };
-    if (currentAction) {
-      this.currentActionEl.setText(currentAction);
-    }
-    this.render();
-  }
-
-  markComplete() {
-    this.isDone = true;
-    this.currentActionEl.setText('');
-    this.render();
-    this.closeButtonEl.disabled = false;
-  }
-
-  markFailed(error: string) {
-    this.isDone = true;
-    this.phaseEl.setText('Deduplication failed');
-    this.currentActionEl.setText(`Error: ${error}`);
-    this.closeButtonEl.disabled = false;
-  }
-
-  private render() {
-    // Phase
-    if (!this.isDone) {
-      this.phaseEl.setText('Running deduplication...');
-    } else {
-      this.phaseEl.setText('Deduplication complete!');
-    }
-
-    // Progress summary
-    this.progressEl.setText(
-      `Scanned: ${this.stats.totalRemoteDocs} documents`
-    );
-
-    // Stats
-    const statsList = [
-      `Duplicates found: ${this.stats.duplicatesFound}`,
-      `Duplicates deleted: ${this.stats.duplicatesDeleted}`,
-      `State updates: ${this.stats.stateUpdated}`,
-    ];
-    this.statsEl.setText(statsList.join('\n'));
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
-```
+**Implementation:** See [`src/ui/janitorProgressModal.ts`](src/ui/janitorProgressModal.ts) for the complete `JanitorProgressModal` class, including:
+- Real-time progress display
+- Stats tracking (duplicates found/deleted, state updates)
+- Current action display
+- Completion/failure handling
 
 ---
 
-### 6.7 Initial Indexing Progress View (`progressView.ts`)
+### 6.7 Initial Indexing Progress View (`progressView.ts`) *(Planned - not yet implemented)*
 
 **Problem:** For vaults with 1,000+ notes, initial indexing can take hours. The status bar alone is insufficient for such a large operation.
 
 **Solution:** Dedicated modal view that shows detailed progress during initial indexing.
 
-```typescript
-// src/ui/progressView.ts
-import { App, Modal, Notice } from 'obsidian';
-
-export interface ProgressStats {
-  phase: 'scanning' | 'indexing' | 'complete';
-  scannedFiles: number;
-  totalFiles: number;
-  indexedFiles: number;
-  filesToIndex: number;
-  failedFiles: number;
-  currentFile?: string;
-  estimatedTimeRemaining?: number; // seconds
-}
-
-export class ProgressModal extends Modal {
-  private stats: ProgressStats;
-  private contentEl: HTMLElement;
-  private isPaused: boolean = false;
-  private onPause?: () => void;
-  private onResume?: () => void;
-  private onCancel?: () => void;
-
-  constructor(app: App, options?: {
-    onPause?: () => void;
-    onResume?: () => void;
-    onCancel?: () => void;
-  }) {
-    super(app);
-    this.onPause = options?.onPause;
-    this.onResume = options?.onResume;
-    this.onCancel = options?.onCancel;
-
-    this.stats = {
-      phase: 'scanning',
-      scannedFiles: 0,
-      totalFiles: 0,
-      indexedFiles: 0,
-      filesToIndex: 0,
-      failedFiles: 0,
-    };
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    contentEl.createEl('h2', { text: 'EzRAG Initial Indexing' });
-
-    // Phase indicator
-    this.phaseEl = contentEl.createDiv({ cls: 'ezrag-progress-phase' });
-
-    // Progress bar
-    this.progressBarEl = contentEl.createDiv({ cls: 'ezrag-progress-bar-container' });
-    this.progressBarFillEl = this.progressBarEl.createDiv({ cls: 'ezrag-progress-bar-fill' });
-
-    // Stats display
-    this.statsEl = contentEl.createDiv({ cls: 'ezrag-progress-stats' });
-
-    // Current file
-    this.currentFileEl = contentEl.createDiv({ cls: 'ezrag-progress-current' });
-
-    // Time estimate
-    this.timeEl = contentEl.createDiv({ cls: 'ezrag-progress-time' });
-
-    // Action buttons
-    const buttonContainer = contentEl.createDiv({ cls: 'ezrag-progress-buttons' });
-
-    this.pauseButton = buttonContainer.createEl('button', { text: 'Pause' });
-    this.pauseButton.addEventListener('click', () => this.togglePause());
-
-    this.cancelButton = buttonContainer.createEl('button', {
-      text: 'Cancel',
-      cls: 'mod-warning'
-    });
-    this.cancelButton.addEventListener('click', () => this.cancel());
-
-    this.closeButton = buttonContainer.createEl('button', {
-      text: 'Run in Background',
-      cls: 'mod-cta'
-    });
-    this.closeButton.addEventListener('click', () => this.close());
-
-    // Initial render
-    this.render();
-  }
-
-  updateStats(stats: Partial<ProgressStats>) {
-    this.stats = { ...this.stats, ...stats };
-    this.render();
-  }
-
-  private render() {
-    // Phase indicator
-    const phaseText = {
-      scanning: 'Phase 1: Scanning files...',
-      indexing: 'Phase 2: Indexing notes...',
-      complete: 'Indexing complete!',
-    }[this.stats.phase];
-    this.phaseEl.setText(phaseText);
-
-    // Progress bar
-    let progress = 0;
-    if (this.stats.phase === 'scanning') {
-      progress = this.stats.totalFiles > 0
-        ? (this.stats.scannedFiles / this.stats.totalFiles) * 100
-        : 0;
-    } else if (this.stats.phase === 'indexing') {
-      progress = this.stats.filesToIndex > 0
-        ? (this.stats.indexedFiles / this.stats.filesToIndex) * 100
-        : 0;
-    } else {
-      progress = 100;
-    }
-
-    this.progressBarFillEl.style.width = `${progress}%`;
-
-    // Stats display
-    if (this.stats.phase === 'scanning') {
-      this.statsEl.setText(
-        `Scanned: ${this.stats.scannedFiles} / ${this.stats.totalFiles} files`
-      );
-    } else if (this.stats.phase === 'indexing') {
-      this.statsEl.setText(
-        `Indexed: ${this.stats.indexedFiles} / ${this.stats.filesToIndex} files\n` +
-        `Failed: ${this.stats.failedFiles}`
-      );
-    } else {
-      this.statsEl.setText(
-        `Successfully indexed ${this.stats.indexedFiles} files\n` +
-        `Failed: ${this.stats.failedFiles}`
-      );
-    }
-
-    // Current file
-    if (this.stats.currentFile) {
-      this.currentFileEl.setText(`Current: ${this.stats.currentFile}`);
-    } else {
-      this.currentFileEl.setText('');
-    }
-
-    // Time estimate
-    if (this.stats.estimatedTimeRemaining) {
-      const minutes = Math.floor(this.stats.estimatedTimeRemaining / 60);
-      const seconds = this.stats.estimatedTimeRemaining % 60;
-      this.timeEl.setText(
-        `Estimated time remaining: ${minutes}m ${seconds}s`
-      );
-    } else {
-      this.timeEl.setText('');
-    }
-
-    // Update button states
-    if (this.stats.phase === 'complete') {
-      this.pauseButton.disabled = true;
-      this.cancelButton.disabled = true;
-      this.closeButton.setText('Close');
-    }
-  }
-
-  private togglePause() {
-    this.isPaused = !this.isPaused;
-
-    if (this.isPaused) {
-      this.pauseButton.setText('Resume');
-      if (this.onPause) this.onPause();
-    } else {
-      this.pauseButton.setText('Pause');
-      if (this.onResume) this.onResume();
-    }
-  }
-
-  private cancel() {
-    if (this.onCancel) {
-      this.onCancel();
-    }
-    this.close();
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
-```
-
-**Usage in IndexManager:**
-
-```typescript
-// In reconcileOnStartup, detect if this is a large initial index:
-async reconcileOnStartup(): Promise<void> {
-  const files = this.getIndexableFiles();
-
-  this.stats.total = files.length;
-  this.stats.completed = 0;
-  this.stats.failed = 0;
-  this.stats.pending = 0;
-
-  // Detect if this is a "first run" situation
-  const isFirstRun = files.length > 100 &&
-                     Object.keys(this.state.getAllDocStates()).length === 0;
-
-  if (isFirstRun && this.onLargeIndexStart) {
-    // Notify main plugin to show progress modal
-    this.onLargeIndexStart(files.length);
-  }
-
-  // ... rest of scanning logic
-}
-```
-
-### 6.8 Main Plugin (`main.ts`)
-
-```typescript
-// src/main.ts
-import { App, Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
-import { StateManager, DEFAULT_DATA } from './state/state';
-import { GeminiService } from './gemini/geminiService';
-import { IndexManager } from './indexing/indexManager';
-import { RunnerManager } from './runner/runnerState';
-import { Janitor } from './indexing/janitor';
-import { JanitorProgressModal } from './ui/janitorProgressModal';
-import { EzRAGSettingTab } from './ui/settingsTab';
-
-export default class EzRAGPlugin extends Plugin {
-  stateManager: StateManager;
-  runnerManager: RunnerManager | null = null; // Only on desktop
-  geminiService: GeminiService | null = null;
-  indexManager: IndexManager | null = null;
-  statusBarItem: HTMLElement | null = null;
-
-  async onload() {
-    console.log('Loading EzRAG plugin');
-
-    // Load persisted data with proper deep merge for nested objects
-    const savedData = await this.loadData();
-    if (savedData) {
-      // Deep merge nested chunkingConfig
-      savedData.settings = {
-        ...DEFAULT_DATA.settings,
-        ...savedData.settings,
-        chunkingConfig: {
-          ...DEFAULT_DATA.settings.chunkingConfig,
-          ...(savedData.settings?.chunkingConfig || {})
-        }
-      };
-    }
-    this.stateManager = new StateManager(savedData || DEFAULT_DATA);
-
-    // Load runner state (per-machine, per-vault, non-synced)
-    // ONLY AVAILABLE ON DESKTOP - mobile doesn't support Node.js modules
-    if (Platform.isDesktopApp) {
-      const vaultPath = this.app.vault.adapter.getBasePath?.() || this.app.vault.getName();
-      this.runnerManager = new RunnerManager(this.manifest.id, vaultPath);
-      await this.runnerManager.load();
-    }
-
-    // FIRST-RUN ONBOARDING: Check if API key is set
-    const settings = this.stateManager.getSettings();
-    const isFirstRun = !settings.apiKey;
-
-    if (isFirstRun) {
-      // Show welcome notice with action button
-      this.showFirstRunWelcome();
-    } else if (this.runnerManager?.isRunner()) {
-      // Only initialize services on the runner machine (desktop only)
-      await this.initializeServices();
-    }
-
-    // Add settings tab
-    this.addSettingTab(new EzRAGSettingTab(this.app, this));
-
-    // Add status bar
-    this.statusBarItem = this.addStatusBarItem();
-    this.updateStatusBar(this.getStatusBarText());
-
-    // Register vault events after layout is ready to avoid processing existing files on startup
-    // ONLY REGISTER IF THIS MACHINE IS THE RUNNER
-    this.app.workspace.onLayoutReady(() => {
-      if (!this.runnerManager.isRunner()) {
-        console.log('[EzRAG] Not the runner machine, skipping vault event registration');
-        return;
-      }
-
-      this.registerEvent(
-        this.app.vault.on('create', (file) => {
-          if (file instanceof TFile) {
-            this.indexManager?.onFileCreated(file);
-          }
-        })
-      );
-
-      this.registerEvent(
-        this.app.vault.on('modify', (file) => {
-          if (file instanceof TFile) {
-            this.indexManager?.onFileModified(file);
-          }
-        })
-      );
-
-      this.registerEvent(
-        this.app.vault.on('rename', (file, oldPath) => {
-          if (file instanceof TFile) {
-            this.indexManager?.onFileRenamed(file, oldPath);
-          }
-        })
-      );
-
-      this.registerEvent(
-        this.app.vault.on('delete', (file) => {
-          if (file instanceof TFile) {
-            this.indexManager?.onFileDeleted(file.path);
-          }
-        })
-      );
-
-      // Run startup reconciliation after layout is ready (only on runner)
-      if (this.indexManager) {
-        this.indexManager.reconcileOnStartup();
-      }
-    });
-
-    // Add commands (only available if runner)
-    this.addCommand({
-      id: 'rebuild-index',
-      name: 'Rebuild Index',
-      checkCallback: (checking) => {
-        if (!this.runnerManager.isRunner()) return false;
-        if (!checking) this.rebuildIndex();
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: 'cleanup-orphans',
-      name: 'Cleanup Orphaned Documents',
-      checkCallback: (checking) => {
-        if (!this.runnerManager.isRunner()) return false;
-        if (!checking) this.cleanupOrphans();
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: 'run-janitor',
-      name: 'Run Deduplication',
-      checkCallback: (checking) => {
-        if (!this.runnerManager.isRunner()) return false;
-        if (!checking) this.runJanitorWithUI();
-        return true;
-      },
-    });
-  }
-
-  /**
-   * Show first-run welcome modal
-   */
-  private showFirstRunWelcome(): void {
-    const modal = new FirstRunModal(this.app, () => {
-      // Open settings when user clicks the button
-      this.app.setting.open();
-      this.app.setting.openTabById(this.manifest.id);
-    });
-    modal.open();
-  }
-
-  /**
-   * Run Janitor deduplication with progress UI (manual trigger only)
-   */
-  async runJanitorWithUI(): Promise<void> {
-    if (!this.runnerManager.isRunner()) {
-      new Notice('This machine is not configured as the runner. Enable it in settings first.');
-      return;
-    }
-
-    if (!this.indexManager || !this.geminiService) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    const modal = new JanitorProgressModal(this.app);
-    modal.open();
-
-    try {
-      const janitor = new Janitor({
-        geminiService: this.geminiService,
-        stateManager: this.stateManager,
-        storeName: this.stateManager.getSettings().storeName,
-        onProgress: (msg) => {
-          // Update modal with progress messages
-          console.log(`[Janitor] ${msg}`);
-          modal.updateStats({}, msg);
-        },
-      });
-
-      const stats = await janitor.run();
-
-      modal.updateStats(stats);
-      modal.markComplete();
-
-      if (stats.duplicatesDeleted > 0 || stats.stateUpdated > 0) {
-        await this.saveState();
-      }
-
-      new Notice(
-        `Deduplication complete: ${stats.duplicatesDeleted} duplicates removed, ` +
-        `${stats.stateUpdated} state updates`
-      );
-    } catch (err) {
-      console.error('[EzRAG] Janitor failed:', err);
-      modal.markFailed(err.message || 'Unknown error');
-      new Notice('Deduplication failed. Check console for details.');
-    }
-  }
-
-  /**
-   * Get status bar text based on current state
-   */
-  private getStatusBarText(): string {
-    const settings = this.stateManager.getSettings();
-
-    if (!settings.apiKey) {
-      return 'EzRAG: Setup required';
-    }
-
-    if (!this.runnerManager.isRunner()) {
-      return 'EzRAG: Not runner';
-    }
-
-    return 'EzRAG: Idle';
-  }
-
-  async onExternalSettingsChange() {
-    // Handle external settings changes (e.g., from sync services)
-    const savedData = await this.loadData();
-    if (savedData) {
-      // Deep merge nested chunkingConfig
-      savedData.settings = {
-        ...DEFAULT_DATA.settings,
-        ...savedData.settings,
-        chunkingConfig: {
-          ...DEFAULT_DATA.settings.chunkingConfig,
-          ...(savedData.settings?.chunkingConfig || {})
-        }
-      };
-      this.stateManager = new StateManager(savedData);
-
-      // Re-initialize services if API key changed
-      const settings = this.stateManager.getSettings();
-      if (settings.apiKey && this.geminiService) {
-        await this.initializeServices();
-      }
-    }
-  }
-
-  async onunload() {
-    console.log('Unloading EzRAG plugin');
-  }
-
-  async saveState(): Promise<void> {
-    await this.saveData(this.stateManager.exportData());
-  }
-
-  async initializeServices(): Promise<void> {
-    const settings = this.stateManager.getSettings();
-
-    if (!settings.apiKey) {
-      new Notice('Please set your Gemini API key in settings');
-      return;
-    }
-
-    // Initialize Gemini service
-    this.geminiService = new GeminiService(settings.apiKey);
-
-    // Get or create store
-    const vaultName = this.app.vault.getName();
-    const storeName = await this.geminiService.getOrCreateStore(vaultName);
-
-    this.stateManager.updateSettings({
-      storeName,
-      storeDisplayName: vaultName
-    });
-    await this.saveState();
-
-    // Initialize index manager
-    this.indexManager = new IndexManager({
-      vault: this.app.vault,
-      app: this.app, // Pass app for MetadataCache access
-      stateManager: this.stateManager,
-      geminiService: this.geminiService,
-      vaultName,
-      onProgress: (current, total, status) => {
-        this.updateStatusBar(`${status}: ${current}/${total}`);
-      },
-    });
-  }
-
-  async rebuildIndex(): Promise<void> {
-    if (!this.indexManager) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    new Notice('Rebuilding index...');
-    await this.indexManager.rebuildIndex();
-    await this.saveState();
-    new Notice('Index rebuild complete!');
-  }
-
-  async previewOrphans(): Promise<void> {
-    if (!this.indexManager || !this.geminiService) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    const settings = this.stateManager.getSettings();
-    const remoteDocs = await this.geminiService.listDocuments(settings.storeName);
-    const orphans: string[] = [];
-
-    for (const doc of remoteDocs) {
-      const pathMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path');
-      if (!pathMeta) continue;
-
-      const vaultPath = pathMeta.stringValue;
-      const file = this.app.vault.getAbstractFileByPath(vaultPath);
-
-      if (!file) {
-        orphans.push(vaultPath);
-      }
-    }
-
-    if (orphans.length === 0) {
-      new Notice('No orphaned documents found!');
-    } else {
-      new Notice(`Found ${orphans.length} orphaned documents:\n${orphans.slice(0, 10).join('\n')}${orphans.length > 10 ? '\n...' : ''}`);
-    }
-  }
-
-  async cleanupOrphans(): Promise<void> {
-    if (!this.indexManager) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    new Notice('Cleaning up orphaned documents...');
-    const deleted = await this.indexManager.cleanupOrphans();
-    await this.saveState();
-    new Notice(`Cleanup complete! Deleted ${deleted} orphaned documents.`);
-  }
-
-  async showStoreStats(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    const settings = this.stateManager.getSettings();
-    if (!settings.storeName) {
-      new Notice('No store configured for this vault.');
-      return;
-    }
-
-    const store = await this.geminiService.getStore(settings.storeName);
-
-    const statsMessage = `
-FileSearchStore: ${store.displayName}
-
-Active Documents: ${store.activeDocumentsCount || 0}
-Pending Documents: ${store.pendingDocumentsCount || 0}
-Failed Documents: ${store.failedDocumentsCount || 0}
-Total Size: ${this.formatBytes(parseInt(store.sizeBytes || '0'))}
-
-Created: ${new Date(store.createTime).toLocaleString()}
-Updated: ${new Date(store.updateTime).toLocaleString()}
-    `.trim();
-
-    new Notice(statsMessage, 10000);
-  }
-
-  async listAllStores(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    const stores = await this.geminiService.listStores();
-
-    if (stores.length === 0) {
-      new Notice('No FileSearchStores found for this API key.');
-      return;
-    }
-
-    const storesList = stores.map((store, idx) => {
-      const active = store.activeDocumentsCount || 0;
-      const pending = store.pendingDocumentsCount || 0;
-      const failed = store.failedDocumentsCount || 0;
-      const size = this.formatBytes(parseInt(store.sizeBytes || '0'));
-      return `${idx + 1}. ${store.displayName}\n   Docs: ${active} active, ${pending} pending, ${failed} failed\n   Size: ${size}`;
-    }).join('\n\n');
-
-    new Notice(`FileSearchStores (${stores.length} total):\n\n${storesList}`, 15000);
-  }
-
-  async deleteCurrentStore(): Promise<void> {
-    if (!this.geminiService) {
-      new Notice('Service not initialized. Set API key first.');
-      return;
-    }
-
-    const settings = this.stateManager.getSettings();
-    if (!settings.storeName) {
-      new Notice('No store configured for this vault.');
-      return;
-    }
-
-    // Show confirmation modal
-    const modal = new ConfirmDeleteModal(
-      this.app,
-      settings.storeDisplayName,
-      async () => {
-        new Notice('Deleting FileSearchStore...');
-        await this.geminiService!.deleteStore(settings.storeName);
-
-        // Clear local state
-        this.stateManager.updateSettings({
-          storeName: '',
-          storeDisplayName: '',
-        });
-        this.stateManager.clearIndex();
-        await this.saveState();
-
-        new Notice('FileSearchStore deleted successfully!');
-      }
-    );
-    modal.open();
-  }
-
-  formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-  }
-
-  getIndexStats() {
-    const allStates = this.stateManager.getAllDocStates();
-    const stats = {
-      total: Object.keys(allStates).length,
-      ready: 0,
-      pending: 0,
-      error: 0,
-    };
-
-    for (const state of Object.values(allStates)) {
-      stats[state.status]++;
-    }
-
-    return stats;
-  }
-
-  updateStatusBar(text: string): void {
-    // Note: Status bar is not available on mobile
-    if (this.statusBarItem) {
-      this.statusBarItem.setText(`EzRAG: ${text}`);
-    }
-  }
-}
-
-/**
- * First-run welcome modal
- */
-class FirstRunModal extends Modal {
-  private onOpenSettings: () => void;
-
-  constructor(app: App, onOpenSettings: () => void) {
-    super(app);
-    this.onOpenSettings = onOpenSettings;
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl('h2', { text: 'Welcome to EzRAG!' });
-
-    contentEl.createEl('p', {
-      text: 'EzRAG indexes your Obsidian notes into Google Gemini\'s File Search API, enabling semantic search and chat with your notes.'
-    });
-
-    contentEl.createEl('p', {
-      text: 'To get started, you need to:'
-    });
-
-    const list = contentEl.createEl('ol');
-    list.createEl('li', { text: 'Get a Google Gemini API key from ai.google.dev' });
-    list.createEl('li', { text: 'Add it to EzRAG settings' });
-    list.createEl('li', { text: 'Let EzRAG index your notes' });
-
-    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
-
-    const settingsButton = buttonContainer.createEl('button', {
-      text: 'Open Settings',
-      cls: 'mod-cta'
-    });
-    settingsButton.addEventListener('click', () => {
-      this.close();
-      this.onOpenSettings();
-    });
-
-    const cancelButton = buttonContainer.createEl('button', { text: 'Later' });
-    cancelButton.addEventListener('click', () => this.close());
-  }
-
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-}
-
-/**
- * Confirmation modal for destructive actions
- */
-class ConfirmDeleteModal extends Modal {
-  private storeName: string;
-  private onConfirm: () => Promise<void>;
-
-  constructor(app: App, storeName: string, onConfirm: () => Promise<void>) {
-    super(app);
-    this.storeName = storeName;
-    this.onConfirm = onConfirm;
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl('h2', { text: 'Confirm deletion' });
-    contentEl.createEl('p', {
-      text: `Are you sure you want to permanently delete the FileSearchStore "${this.storeName}"?`
-    });
-    contentEl.createEl('p', {
-      text: 'This action cannot be undone!',
-      cls: 'mod-warning'
-    });
-
-    const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
-
-    const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
-    cancelButton.addEventListener('click', () => this.close());
-
-    const confirmButton = buttonContainer.createEl('button', {
-      text: 'Delete',
-      cls: 'mod-warning'
-    });
-    confirmButton.addEventListener('click', async () => {
-      this.close();
-      await this.onConfirm();
-    });
-  }
-
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-}
-```
+**File:** [`src/ui/progressView.ts`](src/ui/progressView.ts) *(Note: This file does not exist yet - planned for future implementation)*
+
+**Status:** This feature is planned but not yet implemented. When implemented, it will provide:
+- Phase indicators (scanning, indexing, complete)
+- Progress bar with percentage
+- Stats display (scanned/indexed/failed files)
+- Current file being processed
+- Time estimate
+- Pause/Resume/Cancel controls
+
+**Usage in IndexManager:** The progress modal integration is planned for future implementation. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) for the current `reconcileOnStartup()` implementation.
+
+### 6.8 Main Plugin ([`main.ts`](main.ts))
+
+**File:** [`main.ts`](main.ts)
+
+**Implementation:** See [`main.ts`](main.ts) for the complete `EzRAGPlugin` class, including:
+- `onload()` - Plugin initialization with deep merge for nested settings
+- `onunload()` - Cleanup
+- `initializeServices()` - Initialize Gemini service and IndexManager
+- `runJanitorWithUI()` - Run deduplication with progress modal
+- `rebuildIndex()` - Manual rebuild
+- `cleanupOrphans()` - Remove orphaned documents
+- `showStoreStats()` - Display store statistics
+- `listAllStores()` - List all stores for API key
+- `deleteCurrentStore()` - Delete current store with confirmation
+- `getIndexStats()` - Get index statistics
+- `updateStatusBar()` - Update status bar text
+- `showFirstRunWelcome()` - First-run onboarding modal
+- Helper modals: `FirstRunModal`, `ConfirmDeleteModal`
 
 ### 6.5 Janitor Pattern for Deduplication
 
@@ -2426,189 +481,14 @@ class ConfirmDeleteModal extends Modal {
 
 #### Janitor Implementation
 
-```typescript
-// src/indexing/janitor.ts
-import { GeminiService } from '../gemini/geminiService';
-import { StateManager, IndexedDocState } from '../state/state';
+**File:** [`src/indexing/janitor.ts`](src/indexing/janitor.ts)
 
-export interface JanitorOptions {
-  geminiService: GeminiService;
-  stateManager: StateManager;
-  storeName: string;
-  onProgress?: (message: string) => void;
-}
-
-export interface JanitorStats {
-  totalRemoteDocs: number;
-  duplicatesFound: number;
-  duplicatesDeleted: number;
-  stateUpdated: number;
-  orphansDeleted: number;
-}
-
-export class Janitor {
-  private gemini: GeminiService;
-  private state: StateManager;
-  private storeName: string;
-  private onProgress?: (message: string) => void;
-
-  constructor(options: JanitorOptions) {
-    this.gemini = options.geminiService;
-    this.state = options.stateManager;
-    this.storeName = options.storeName;
-    this.onProgress = options.onProgress;
-  }
-
-  /**
-   * Run full deduplication and orphan cleanup
-   *
-   * Performance: Listing documents requires pagination (20 docs/page max).
-   * For 5,000 documents:
-   *   - 250 API calls (one per page)
-   *   - ~10-15 seconds total
-   *   - Much cheaper than 5,000 individual documents.get() calls
-   *
-   * This overhead is acceptable for periodic background runs (every 30 mins).
-   */
-  async run(): Promise<JanitorStats> {
-    const stats: JanitorStats = {
-      totalRemoteDocs: 0,
-      duplicatesFound: 0,
-      duplicatesDeleted: 0,
-      stateUpdated: 0,
-      orphansDeleted: 0,
-    };
-
-    this.log('Fetching all documents from Gemini...');
-
-    // Fetch all documents from Gemini with pagination
-    // NOTE: API returns max 20 docs/page (default 10). For 5,000 docs = 250+ API calls
-    // This can take 10-15 seconds for large vaults
-    const remoteDocs = await this.gemini.listDocuments(this.storeName);
-    stats.totalRemoteDocs = remoteDocs.length;
-
-    this.log(`Found ${remoteDocs.length} remote documents. Building index...`);
-
-    // Build map: PathHash -> DocumentInfo[]
-    const pathHashMap = new Map<string, Array<{
-      docName: string;
-      vaultPath: string;
-      pathHash: string;
-      mtime: number;
-    }>>();
-
-    for (const doc of remoteDocs) {
-      // Extract metadata
-      const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
-      const vaultPathMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path');
-      const mtimeMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_mtime');
-
-      if (!pathHashMeta || !vaultPathMeta) {
-        // Not an Obsidian document (or missing metadata), skip
-        continue;
-      }
-
-      const pathHash = pathHashMeta.stringValue!;
-      const vaultPath = vaultPathMeta.stringValue!;
-      const mtime = mtimeMeta?.numericValue || 0;
-
-      if (!pathHashMap.has(pathHash)) {
-        pathHashMap.set(pathHash, []);
-      }
-
-      pathHashMap.get(pathHash)!.push({
-        docName: doc.name,
-        vaultPath,
-        pathHash,
-        mtime,
-      });
-    }
-
-    this.log('Checking for duplicates and orphans...');
-
-    // Process each pathHash group
-    for (const [pathHash, docs] of pathHashMap) {
-      if (docs.length === 1) {
-        // No duplicates, check if local state matches
-        const doc = docs[0];
-        const localState = this.state.getDocState(doc.vaultPath);
-
-        if (localState && localState.geminiDocumentName !== doc.docName) {
-          // Local state points to wrong document, update it
-          localState.geminiDocumentName = doc.docName;
-          this.state.setDocState(doc.vaultPath, localState);
-          stats.stateUpdated++;
-        }
-      } else {
-        // DUPLICATES FOUND
-        stats.duplicatesFound++;
-        this.log(`Found ${docs.length} duplicates for ${docs[0].vaultPath}`);
-
-        // Sort by mtime (descending), keep the newest
-        docs.sort((a, b) => b.mtime - a.mtime);
-        const winner = docs[0];
-        const losers = docs.slice(1);
-
-        this.log(`  Keeping: ${winner.docName} (mtime: ${winner.mtime})`);
-
-        // Delete older duplicates
-        for (const loser of losers) {
-          try {
-            this.log(`  Deleting: ${loser.docName} (mtime: ${loser.mtime})`);
-            await this.gemini.deleteDocument(loser.docName);
-            stats.duplicatesDeleted++;
-          } catch (err) {
-            console.error(`Failed to delete duplicate ${loser.docName}:`, err);
-          }
-        }
-
-        // Update local state to point to winner
-        const localState = this.state.getDocState(winner.vaultPath);
-        if (localState) {
-          localState.geminiDocumentName = winner.docName;
-          this.state.setDocState(winner.vaultPath, localState);
-          stats.stateUpdated++;
-        }
-      }
-    }
-
-    this.log('Janitor run complete!');
-    return stats;
-  }
-
-  /**
-   * Check if a document with this pathHash already exists in Gemini
-   * Used during upload to prevent creating duplicates
-   *
-   * PERFORMANCE WARNING: This fetches ALL documents with pagination.
-   * - API returns max 20 docs/page (default 10)
-   * - For 5,000 documents = 250+ API calls
-   * - Takes 10-15 seconds for large vaults
-   * - Only called when local state is missing (cold path, rare)
-   *
-   * Returns: geminiDocumentName if found, null otherwise
-   */
-  async findExistingDocument(pathHash: string): Promise<string | null> {
-    // Fetch all documents (requires pagination: 20 docs/page max)
-    const remoteDocs = await this.gemini.listDocuments(this.storeName);
-
-    for (const doc of remoteDocs) {
-      const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
-      if (pathHashMeta?.stringValue === pathHash) {
-        return doc.name;
-      }
-    }
-
-    return null;
-  }
-
-  private log(message: string): void {
-    if (this.onProgress) {
-      this.onProgress(message);
-    }
-  }
-}
-```
+**Implementation:** See [`src/indexing/janitor.ts`](src/indexing/janitor.ts) for the complete `Janitor` class, including:
+- `run()` - Full deduplication and orphan cleanup (with pagination handling)
+- `findExistingDocument()` - Check if document exists by pathHash (cold path, rare)
+- Duplicate detection by pathHash grouping
+- Winner selection by mtime (newest wins)
+- State synchronization after deduplication
 
 #### When to Run the Janitor
 
@@ -2619,43 +499,7 @@ export class Janitor {
 
 #### Integration with IndexManager
 
-The `IndexManager` should check for existing documents before uploading to prevent creating duplicates in the first place:
-
-```typescript
-// In indexManager.ts, update indexFile method:
-
-private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
-  const pathHash = computePathHash(file.path); // Synchronous now
-  const settings = this.state.getSettings();
-
-  // Check if local state has a document ID
-  const existingState = this.state.getDocState(file.path);
-  let geminiDocumentName = existingState?.geminiDocumentName;
-
-  // SYNC CONFLICT PREVENTION: If no local ID, check if remote document exists
-  if (!geminiDocumentName) {
-    geminiDocumentName = await this.janitor.findExistingDocument(pathHash);
-
-    if (geminiDocumentName) {
-      // Remote document exists! This is a stale local state situation.
-      // Adopt the remote ID instead of creating a duplicate.
-      console.log(`Adopting existing document for ${file.path}: ${geminiDocumentName}`);
-    }
-  }
-
-  // Delete old document if exists
-  if (geminiDocumentName) {
-    try {
-      await this.gemini.deleteDocument(geminiDocumentName);
-    } catch (err) {
-      // Document may have been deleted by janitor, ignore
-      console.log(`Document already deleted: ${geminiDocumentName}`);
-    }
-  }
-
-  // Rest of upload logic...
-}
-```
+The `IndexManager` checks for existing documents before uploading to prevent creating duplicates. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) in the `indexFile()` method for the sync conflict prevention logic.
 
 ---
 
@@ -2663,167 +507,13 @@ private async indexFile(file: TFile, content: string, contentHash: string): Prom
 
 ### Example: Frontmatter Tag Extraction
 
-```typescript
-// src/utils/metadata.ts
-import { App, TFile } from 'obsidian';
-
-/**
- * Extract tags from file frontmatter using MetadataCache
- *
- * Benefits:
- * - Already cached (no file read needed)
- * - Handles YAML edge cases properly
- * - Automatically updated by Obsidian
- * - Can extract both frontmatter tags and inline #tags
- */
-export function extractTags(app: App, file: TFile): string[] {
-  const cache = app.metadataCache.getFileCache(file);
-  if (!cache?.frontmatter?.tags) return [];
-
-  const tags = cache.frontmatter.tags;
-
-  // Tags can be: string | string[] | undefined
-  if (typeof tags === 'string') return [tags];
-  if (Array.isArray(tags)) return tags;
-
-  return [];
-}
-
-/**
- * Extract ALL tags including inline #tags from document body
- * Uses Obsidian's built-in getAllTags utility
- */
-export function extractAllTags(app: App, file: TFile): string[] {
-  const cache = app.metadataCache.getFileCache(file);
-  if (!cache) return [];
-
-  // getAllTags combines frontmatter tags + inline #tags
-  const allTags = getAllTags(cache) || [];
-
-  // Remove # prefix if present
-  return allTags.map(tag => tag.startsWith('#') ? tag.slice(1) : tag);
-}
-
-/**
- * Extract any frontmatter field
- */
-export function getFrontmatterField(app: App, file: TFile, field: string): any {
-  const cache = app.metadataCache.getFileCache(file);
-  return cache?.frontmatter?.[field];
-}
-
-/**
- * Modify frontmatter (atomic operation)
- */
-export async function updateFrontmatter(
-  app: App,
-  file: TFile,
-  updater: (frontmatter: any) => void
-): Promise<void> {
-  await app.fileManager.processFrontMatter(file, updater);
-}
-```
+**Implementation:** Tag extraction is implemented directly in `IndexManager.extractTags()` using MetadataCache. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) for the implementation that extracts tags from frontmatter.
 
 ### Example: Query with Metadata Filter
 
-**IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.4).
+**IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.5).
 
-#### Using generateContent API (string metadataFilter)
-
-```typescript
-// In chat interface - uses generateContent with fileSearch tool
-async function searchWithFilter(query: string, tags?: string[]) {
-  const settings = stateManager.getSettings();
-
-  // Build metadata filter (string format for generateContent API)
-  let metadataFilter = '';
-  if (tags && tags.length > 0) {
-    const tagFilters = tags.map(tag => `tag="${tag}"`).join(' OR ');
-    metadataFilter = `(${tagFilters})`;
-  }
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: query,
-    config: {
-      tools: [
-        {
-          fileSearch: {
-            fileSearchStoreNames: [settings.storeName],
-            metadataFilter,
-          }
-        }
-      ]
-    }
-  });
-
-  return response;
-}
-```
-
-#### Using documents.query API (metadataFilters array)
-
-```typescript
-// Query a specific document with structured metadataFilters
-async function queryDocumentWithFilters(
-  documentName: string, 
-  query: string, 
-  tags?: string[]
-) {
-  // Build metadataFilters array (structured format for documents.query API)
-  const metadataFilters: Array<{
-    key: string;
-    conditions: Array<{
-      stringValue?: string;
-      int_value?: number;
-      operation: "EQUAL" | "GREATER_EQUAL" | "LESS" | "GREATER" | "LESS_EQUAL";
-    }>;
-  }> = [];
-
-  if (tags && tags.length > 0) {
-    // CRITICAL: Key must include "chunk.custom_metadata." prefix
-    // Multiple string values go in same MetadataFilter (OR logic)
-    metadataFilters.push({
-      key: "chunk.custom_metadata.tag",
-      conditions: tags.map(tag => ({
-        stringValue: tag,
-        operation: "EQUAL"
-      }))
-    });
-  }
-
-  const response = await ai.fileSearchStores.documents.query({
-    name: documentName,
-    config: {
-      query,
-      resultsCount: 10,
-      metadataFilters: metadataFilters.length > 0 ? metadataFilters : undefined
-    }
-  });
-
-  return response;
-}
-
-// Helper function to build tag filters
-function buildTagFilters(tags: string[]): Array<{
-  key: string;
-  conditions: Array<{ stringValue: string; operation: "EQUAL" }>;
-}> {
-  if (!tags || tags.length === 0) return [];
-
-  return [
-    {
-      key: "chunk.custom_metadata.tag", // CRITICAL: Must include prefix
-      conditions: tags.map(tag => ({
-        stringValue: tag,
-        operation: "EQUAL"
-      }))
-    }
-  ];
-}
-```
-
-**Key differences:**
+**Implementation:** Metadata filtering examples are documented here for reference. The actual implementation will be in Phase 3 (Chat Interface). Key differences:
 - `generateContent` API: Uses `metadataFilter` (string, simple syntax)
 - `documents.query` API: Uses `metadataFilters[]` (array, structured objects)
 - **CRITICAL**: For `documents.query`, keys must be prefixed with `"chunk.custom_metadata."`
@@ -2850,15 +540,15 @@ function buildTagFilters(tags: string[]): Array<{
 
 The **Runner** (indexing engine) requires Node.js modules:
 
-1. **`fs` (File System)**: Reading/writing runner.json outside vault
-2. **`path`**: Cross-platform path manipulation
-3. **`os`**: Hostname detection and home directory access
-4. **`crypto`**: SHA-256 hashing (for content and path hashing)
+1. **`crypto`**: SHA-256 hashing (for content hashing, path hashing, and vault key generation)
+   - Used in [`hashUtils.ts`](src/indexing/hashUtils.ts) for content/path hashing
+   - Used in [`vault.ts`](src/utils/vault.ts) for vault key generation
 
 **Implementation:**
-- `RunnerManager` only loads on desktop: `if (Platform.isDesktopApp) { ... }`
+- `RunnerStateManager` only loads on desktop: `if (Platform.isDesktopApp) { ... }`
 - Settings UI hides runner toggle on mobile
-- Hash utilities (`hashUtils.ts`) use Node.js crypto (synchronous, fast)
+- Hash utilities use Node.js crypto (synchronous, fast)
+- Runner state uses browser localStorage (available everywhere, but runner only on desktop)
 
 **Manifest configuration:**
 ```json
@@ -3041,7 +731,7 @@ Also plan how to:
 - Map grounding chunks back to Obsidian files (use `obsidian_path` metadata)
 - Handle "open file at citation" links (use `workspace.openLinkText()`)
 
-Don't overstuff `main.ts`—give chat its own module in `ui/chatView.ts`.
+Don't overstuff [`main.ts`](main.ts)—give chat its own module in `ui/chatView.ts` (planned for Phase 3).
 
 ---
 
@@ -3049,67 +739,17 @@ Don't overstuff `main.ts`—give chat its own module in `ui/chatView.ts`.
 
 ### Unit Tests
 
-```typescript
-// tests/state.test.ts
-import { StateManager, computeContentHash } from '../src/state/state';
-
-describe('StateManager', () => {
-  it('should initialize with default data', () => {
-    const sm = new StateManager();
-    expect(sm.getSettings().maxConcurrentUploads).toBe(2);
-  });
-
-  it('should compute content hash consistently', () => {
-    const content = 'Test content';
-    const hash1 = computeContentHash(content);
-    const hash2 = computeContentHash(content);
-    expect(hash1).toBe(hash2);
-  });
-
-  it('should detect content changes via hash', () => {
-    const content1 = 'Original';
-    const content2 = 'Modified';
-    const hash1 = computeContentHash(content1);
-    const hash2 = computeContentHash(content2);
-    expect(hash1).not.toBe(hash2);
-  });
-});
-```
+**Status:** Unit tests are planned but not yet implemented. Test examples would cover:
+- StateManager initialization and data management
+- Hash computation consistency
+- Content change detection
 
 ### Integration Tests
 
-```typescript
-// tests/integration/indexing.test.ts
-describe('IndexManager Integration', () => {
-  it('should index a new file', async () => {
-    // Create mock vault, state, gemini service
-    const vault = createMockVault();
-    const stateManager = new StateManager();
-    const gemini = new MockGeminiService();
-
-    const indexManager = new IndexManager({
-      vault,
-      stateManager,
-      geminiService: gemini,
-      vaultName: 'TestVault',
-    });
-
-    // Create a file
-    const file = vault.createFile('test.md', '# Test Note');
-
-    // Trigger indexing
-    await indexManager.onFileCreated(file);
-
-    // Wait for queue
-    await indexManager.queue.onIdle();
-
-    // Verify state
-    const state = stateManager.getDocState('test.md');
-    expect(state).toBeDefined();
-    expect(state.status).toBe('ready');
-  });
-});
-```
+**Status:** Integration tests are planned but not yet implemented. Test examples would cover:
+- IndexManager file indexing flow
+- Event handling (create/modify/rename/delete)
+- Queue processing and retry logic
 
 ### Manual Testing Checklist
 
@@ -3616,10 +1256,11 @@ The **Runner Pattern** is the critical architectural decision for multi-device v
 - Race conditions and sync conflicts
 
 **Solution:**
-1. **Per-machine runner state** stored outside vault (non-synced):
-   - Location: `~/.config/Obsidian/plugins/ezrag/<vault-hash>/runner.json`
-   - Contains: `isRunner` flag + device metadata
-   - Isolated per vault, per machine
+1. **Per-machine runner state** stored in localStorage (browser-native, non-synced):
+   - Storage: `window.localStorage` with vault-specific key
+   - Key format: `ezrag.runner.<pluginId>.<vaultKey>`
+   - Contains: `isRunner` flag + device ID + timestamp
+   - Isolated per vault, per machine, per browser instance
 
 2. **Gated indexing**: Only runner machine processes vault events
    - Non-runner machines: Plugin loaded but inactive
@@ -3637,5 +1278,11 @@ The **Runner Pattern** is the critical architectural decision for multi-device v
 - Enable runner on ONE machine (e.g., laptop)
 - Other machines show read-only status: "Not runner"
 - If duplicates occur (rare), run manual deduplication on runner
+
+**Benefits of localStorage approach:**
+- ✅ Browser-native, no filesystem dependencies
+- ✅ Synchronous read/write, simpler code
+- ✅ Automatic per-instance isolation
+- ✅ No cross-platform path issues
 
 This plan incorporates extensive feedback and is production-ready for desktop-only deployments with comprehensive multi-device support.

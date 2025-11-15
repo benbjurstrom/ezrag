@@ -5,13 +5,13 @@ import { StateManager } from './src/state/state';
 import { DEFAULT_DATA } from './src/types';
 import { GeminiService } from './src/gemini/geminiService';
 import { IndexManager } from './src/indexing/indexManager';
-import { RunnerManager } from './src/runner/runnerState';
+import { RunnerStateManager } from './src/runner/runnerState';
 import { JanitorProgressModal } from './src/ui/janitorProgressModal';
 import { EzRAGSettingTab } from './src/ui/settingsTab';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
-  runnerManager: RunnerManager | null = null; // Only on desktop
+  runnerManager: RunnerStateManager | null = null; // Only on desktop
   geminiService: GeminiService | null = null;
   indexManager: IndexManager | null = null;
   statusBarItem: HTMLElement | null = null;
@@ -37,9 +37,7 @@ export default class EzRAGPlugin extends Plugin {
     // Load runner state (per-machine, per-vault, non-synced)
     // ONLY AVAILABLE ON DESKTOP - mobile doesn't support Node.js modules
     if (Platform.isDesktopApp) {
-      const vaultPath = (this.app.vault.adapter as any).getBasePath?.() || this.app.vault.getName();
-      this.runnerManager = new RunnerManager(this.manifest.id, vaultPath);
-      await this.runnerManager.load();
+      this.runnerManager = new RunnerStateManager(this.app, this.manifest.id);
     }
 
     // FIRST-RUN ONBOARDING: Check if API key is set
