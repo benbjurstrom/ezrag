@@ -82,6 +82,13 @@ export const DEFAULT_DATA: PersistedData = {
 export interface GroundingChunk {
   retrievedContext?: {
     text?: string;
+    title?: string;  // Title of the attribution (may be populated from custom metadata)
+    uri?: string;    // URI reference (may be populated from custom metadata)
+    documentName?: string;  // Full document name (Vertex AI specific)
+  };
+  web?: {
+    uri?: string;
+    title?: string;
   };
   [key: string]: any;
 }

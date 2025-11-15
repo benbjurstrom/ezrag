@@ -7,7 +7,7 @@ import { ChatMessage, ChatModel, GroundingChunk } from '../types';
 export const CHAT_VIEW_TYPE = 'ezrag-chat-view';
 
 class SourceModal extends Modal {
-  constructor(app: App, private source: { text: string; index: number }) {
+  constructor(app: App, private source: { text: string; index: number; title?: string; uri?: string }) {
     super(app);
   }
 
@@ -16,7 +16,27 @@ class SourceModal extends Modal {
     contentEl.empty();
 
     // Use standard modal structure
-    contentEl.createEl('h3', { text: `Source ${this.source.index}` });
+    const header = contentEl.createEl('h3', { text: `Source ${this.source.index}` });
+
+    // Display title and uri if available
+    if (this.source.title || this.source.uri) {
+      const metadata = contentEl.createDiv('source-metadata');
+      metadata.style.marginBottom = '1em';
+      metadata.style.fontSize = '0.9em';
+      metadata.style.color = 'var(--text-muted)';
+
+      if (this.source.title) {
+        const titleEl = metadata.createDiv();
+        titleEl.createEl('strong', { text: 'Title: ' });
+        titleEl.createSpan({ text: this.source.title });
+      }
+
+      if (this.source.uri) {
+        const uriEl = metadata.createDiv();
+        uriEl.createEl('strong', { text: 'URI: ' });
+        uriEl.createSpan({ text: this.source.uri });
+      }
+    }
 
     const sourceContent = contentEl.createDiv('modal-content');
     sourceContent.innerHTML = this.renderMarkdown(this.source.text);
@@ -327,13 +347,22 @@ export class ChatView extends ItemView {
         const text = chunk?.retrievedContext?.text;
         if (!text) return;
 
+        const title = chunk?.retrievedContext?.title;
+        const uri = chunk?.retrievedContext?.uri;
+
         const sourceBtn = sources.createEl('button', {
           cls: 'ezrag-source-chip',
           text: `${index + 1}`
         });
 
+        // Show title in tooltip if available
+        if (title) {
+          sourceBtn.setAttribute('aria-label', title);
+          sourceBtn.setAttribute('title', title);
+        }
+
         sourceBtn.addEventListener('click', () => {
-          new SourceModal(this.app, { text, index: index + 1 }).open();
+          new SourceModal(this.app, { text, index: index + 1, title, uri }).open();
         });
       });
     }

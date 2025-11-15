@@ -223,8 +223,9 @@ export class IndexManager {
       const state = this.state.getDocState(file.path);
 
       // Only queue if content actually changed
+      // Apply throttle for modifications to batch rapid edits
       if (!state || state.contentHash !== contentHash || state.status === 'error') {
-        this.queueIndexJob(file, contentHash);
+        this.queueIndexJob(file, contentHash, true);
       }
     } catch (err) {
       console.error(`Failed to check ${file.path}:`, err);
@@ -358,11 +359,20 @@ export class IndexManager {
    * Private: Queue a job to index a file
    * Accepts pre-read content and hash to avoid double-reading
    *
+   * @param file - The file to index
+   * @param contentHash - The content hash
+   * @param applyThrottle - Whether to apply uploadThrottleMs delay (default: false)
+   *                        Only set to true for file modification events to batch rapid edits.
+   *                        Bulk operations (reconcile, rebuild) should use false for immediate processing.
+   *
    * Includes retry logic with exponential backoff for transient errors
    */
-  private queueIndexJob(file: TFile, contentHash: string): void {
+  private queueIndexJob(file: TFile, contentHash: string, applyThrottle: boolean = false): void {
     const existingEntry = this.state.findQueueEntryByPath(file.path);
-    const throttleMs = this.state.getSettings().uploadThrottleMs ?? 0;
+
+    // Only apply throttle if explicitly requested (for file modifications)
+    // Bulk operations (reconcile, rebuild) should process immediately
+    const throttleMs = applyThrottle ? (this.state.getSettings().uploadThrottleMs ?? 0) : 0;
     const readyAt = throttleMs > 0 ? Date.now() + throttleMs : Date.now();
     const entry: IndexQueueEntry = {
       id: existingEntry?.id ?? this.generateQueueEntryId(),
@@ -699,12 +709,28 @@ export class IndexManager {
     // Build metadata
     // Note: Gemini API doesn't allow duplicate keys in custom_metadata,
     // so we combine multiple tags into a single comma-separated string
+
+    // Extract basename for fileName
+    const fileName = file.basename + '.' + file.extension;
+
+    // Format date as ISO string
+    const fileDate = new Date(file.stat.mtime).toISOString();
+
     const metadata = [
       { key: 'obsidian_vault', stringValue: this.vaultName },
       { key: 'obsidian_path', stringValue: file.path },
       { key: 'obsidian_path_hash', stringValue: pathHash },
       { key: 'obsidian_content_hash', stringValue: contentHash },
       { key: 'obsidian_mtime', numericValue: file.stat.mtime },
+      // Add uri and title metadata for potential grounding chunk attribution
+      // These may be used by Gemini to populate GroundingChunkRetrievedContext.uri and .title
+      { key: 'uri', stringValue: file.path },
+      { key: 'title', stringValue: file.path },
+      // Additional metadata fields for grounding attribution testing
+      { key: 'displayName', stringValue: file.path },  // Full path
+      { key: 'fileName', stringValue: fileName },       // Just the basename
+      { key: 'fileDate', stringValue: fileDate },       // ISO timestamp
+      { key: 'sourceUrl', stringValue: file.path },     // Using path as URL
     ];
 
     // Add tags as a single comma-separated entry if tags exist
@@ -732,6 +758,9 @@ export class IndexManager {
     }
 
     // Upload new document with chunking config
+    console.log(`[IndexManager] Uploading document with displayName: ${file.path}`);
+    console.log(`[IndexManager] Metadata: ${JSON.stringify(metadata, null, 2)}`);
+
     const documentName = await this.gemini.uploadDocument({
       storeName: settings.storeName,
       content,

@@ -437,7 +437,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
       'Delete Store',
       `Are you sure you want to permanently delete "${storeName}"?\n\n` +
       `This will delete all indexed documents in this store and cannot be undone.` +
-      (isCurrent ? '\n\nThis is your current store. You will need to set a new current store or upload documents to create a new one.' : '')
+      (isCurrent ? '\n\nThis is your current store. A new store will be automatically created and set as current after deletion.' : '')
     );
 
     if (!confirmed) return;
@@ -448,7 +448,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
     try {
       await service.deleteStore(storeId);
 
-      // If deleting current store, clear from settings
+      // If deleting current store, clear settings and create a new one
       if (isCurrent) {
         this.plugin.stateManager.updateSettings({
           storeName: '',
@@ -456,12 +456,31 @@ export class EzRAGSettingTab extends PluginSettingTab {
         });
         this.plugin.stateManager.clearIndex();
         await this.plugin.saveState();
+
+        new Notice(`Store "${storeName}" deleted. Creating new store...`);
+
+        // Create new store and set as current
+        try {
+          await this.plugin.ensureGeminiResources();
+
+          const newStoreName = this.plugin.stateManager.getSettings().storeDisplayName;
+          new Notice(`New store "${newStoreName}" created and set as current`);
+
+          // Trigger index rebuild if this is a runner
+          if (Platform.isDesktopApp && this.plugin.runnerManager?.isRunner()) {
+            await this.plugin.rebuildIndex();
+          }
+        } catch (err) {
+          console.error('[EzRAG] Failed to create new store:', err);
+          new Notice('Failed to create new store. See console for details.');
+        }
+      } else {
+        new Notice(`Store "${storeName}" deleted successfully`);
       }
 
-      new Notice(`Store "${storeName}" deleted successfully`);
       await this.refreshStoreTable();
 
-      // Re-render entire settings if we deleted current store (to update other sections)
+      // Re-render entire settings to update other sections
       if (isCurrent) {
         this.display();
       }

@@ -449,7 +449,7 @@ export default class EzRAGPlugin extends Plugin {
     return 'Indexing already running.';
   }
 
-  private async ensureGeminiResources(): Promise<boolean> {
+  async ensureGeminiResources(): Promise<boolean> {
     const settings = this.stateManager.getSettings();
 
     const service = this.getGeminiService();
