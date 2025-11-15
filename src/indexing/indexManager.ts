@@ -8,13 +8,21 @@ import { Janitor } from './janitor';
 import { computeContentHash, computePathHash } from './hashUtils';
 import { App, TFile, Vault } from 'obsidian';
 
+export interface IndexingStats {
+  total: number;
+  completed: number;
+  failed: number;
+  pending: number;
+}
+
 export interface IndexManagerOptions {
   vault: Vault;
   app: App; // For MetadataCache access
   stateManager: StateManager;
   geminiService: GeminiService;
   vaultName: string;
-  onProgress?: (current: number, total: number, status: string) => void;
+  onProgress?: (stats: IndexingStats, status: string) => void;
+  onStateChange?: () => void;
 }
 
 export class IndexManager {
@@ -25,9 +33,10 @@ export class IndexManager {
   private vaultName: string;
   private queue: PQueue;
   private janitor: Janitor;
-  private onProgress?: (current: number, total: number, status: string) => void;
+  private onProgress?: (stats: IndexingStats, status: string) => void;
+  private onStateChange?: () => void;
 
-  private stats = {
+  private stats: IndexingStats = {
     total: 0,
     completed: 0,
     failed: 0,
@@ -41,6 +50,7 @@ export class IndexManager {
     this.gemini = options.geminiService;
     this.vaultName = options.vaultName;
     this.onProgress = options.onProgress;
+    this.onStateChange = options.onStateChange;
 
     const settings = this.state.getSettings();
     this.queue = new PQueue({ concurrency: settings.maxConcurrentUploads });
@@ -61,12 +71,13 @@ export class IndexManager {
   async reconcileOnStartup(): Promise<void> {
     const files = this.getIndexableFiles();
 
-    this.stats.total = files.length;
+    this.stats.total = 0;
     this.stats.completed = 0;
     this.stats.failed = 0;
     this.stats.pending = 0;
 
     console.log(`[IndexManager] Reconciling ${files.length} files...`);
+    this.updateProgress('Scanning');
 
     // Scan all files and queue those that need indexing
     // Read and hash once to avoid double-read later
@@ -83,7 +94,6 @@ export class IndexManager {
                               state.status === 'error';
 
         if (needsIndexing) {
-          this.stats.pending++;
           this.queueIndexJob(file, content, contentHash);
         }
       } catch (err) {
@@ -159,6 +169,7 @@ export class IndexManager {
 
     // Remove old state
     this.state.removeDocState(oldPath);
+    this.notifyStateChange();
 
     // Queue new path for indexing if in included folders
     if (this.isInIncludedFolders(file)) {
@@ -190,6 +201,7 @@ export class IndexManager {
 
     // Remove from state
     this.state.removeDocState(path);
+    this.notifyStateChange();
   }
 
   /**
@@ -197,6 +209,7 @@ export class IndexManager {
    */
   async rebuildIndex(): Promise<void> {
     this.state.clearIndex();
+    this.notifyStateChange();
     await this.reconcileOnStartup();
   }
 
@@ -226,6 +239,7 @@ export class IndexManager {
         try {
           await this.gemini.deleteDocument(doc.name);
           this.state.removeDocState(vaultPath);
+          this.notifyStateChange();
           deleted++;
         } catch (err) {
           console.error(`Failed to delete orphan ${doc.name}:`, err);
@@ -250,6 +264,11 @@ export class IndexManager {
    * Includes retry logic with exponential backoff for transient errors
    */
   private queueIndexJob(file: TFile, content: string, contentHash: string): void {
+    this.markPendingState(file, contentHash);
+    this.stats.total++;
+    this.stats.pending++;
+    this.updateProgress('Queued');
+
     this.queue.add(async () => {
       const maxRetries = 3;
       let lastError: Error | null = null;
@@ -258,6 +277,7 @@ export class IndexManager {
         try {
           await this.indexFile(file, content, contentHash);
           this.stats.completed++;
+          this.stats.pending = Math.max(0, this.stats.pending - 1);
           this.updateProgress('Indexing');
           return; // Success, exit retry loop
         } catch (err) {
@@ -280,6 +300,7 @@ export class IndexManager {
 
       // All retries failed
       this.stats.failed++;
+      this.stats.pending = Math.max(0, this.stats.pending - 1);
       console.error(`Failed to index ${file.path} after ${maxRetries} attempts:`, lastError);
 
       // Mark as error in state
@@ -288,9 +309,9 @@ export class IndexManager {
         state.status = 'error';
         state.errorMessage = lastError?.message || 'Unknown error';
         this.state.setDocState(file.path, state);
+        this.notifyStateChange();
       }
 
-      this.stats.pending--;
       this.updateProgress('Indexing');
     });
   }
@@ -346,6 +367,7 @@ export class IndexManager {
       
       // Remove from state (empty files are not indexed)
       this.state.removeDocState(file.path);
+      this.notifyStateChange();
       return;
     }
 
@@ -412,6 +434,7 @@ export class IndexManager {
     };
 
     this.state.setDocState(file.path, newState);
+    this.notifyStateChange();
   }
 
   /**
@@ -466,7 +489,61 @@ export class IndexManager {
    */
   private updateProgress(status: string): void {
     if (this.onProgress) {
-      this.onProgress(this.stats.completed, this.stats.total, status);
+      this.onProgress({ ...this.stats }, status);
     }
+  }
+
+  private markPendingState(file: TFile, contentHash: string): void {
+    const existingState = this.state.getDocState(file.path);
+    const pendingState: IndexedDocState = {
+      vaultPath: file.path,
+      geminiDocumentName: existingState?.geminiDocumentName ?? null,
+      contentHash,
+      pathHash: existingState?.pathHash ?? computePathHash(file.path),
+      status: 'pending',
+      lastLocalMtime: file.stat.mtime,
+      lastIndexedAt: existingState?.lastIndexedAt ?? 0,
+      tags: existingState?.tags ?? [],
+    };
+    delete pendingState.errorMessage;
+    this.state.setDocState(file.path, pendingState);
+    this.notifyStateChange();
+  }
+
+  private notifyStateChange(): void {
+    if (this.onStateChange) {
+      this.onStateChange();
+    }
+  }
+
+  getStats(): IndexingStats {
+    return { ...this.stats };
+  }
+
+  waitForIdle(): Promise<void> {
+    return this.queue.onIdle();
+  }
+
+  pause(): void {
+    this.queue.pause();
+  }
+
+  resume(): void {
+    this.queue.start();
+  }
+
+  clearQueue(): void {
+    this.queue.clear();
+  }
+
+  dispose(): void {
+    this.queue.clear();
+    this.stats = {
+      total: 0,
+      completed: 0,
+      failed: 0,
+      pending: 0,
+    };
+    this.updateProgress('Idle');
   }
 }

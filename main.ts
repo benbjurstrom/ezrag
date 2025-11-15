@@ -4,16 +4,19 @@ import { App, Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
 import { StateManager } from './src/state/state';
 import { DEFAULT_DATA } from './src/types';
 import { GeminiService } from './src/gemini/geminiService';
-import { IndexManager } from './src/indexing/indexManager';
+import { IndexingController, IndexingPhase } from './src/indexing/indexingController';
 import { RunnerStateManager } from './src/runner/runnerState';
 import { JanitorProgressModal } from './src/ui/janitorProgressModal';
 import { EzRAGSettingTab } from './src/ui/settingsTab';
+import { IndexingStatusModal } from './src/ui/indexingStatusModal';
+import { StoreManager } from './src/store/storeManager';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
   runnerManager: RunnerStateManager | null = null; // Only on desktop
   geminiService: GeminiService | null = null;
-  indexManager: IndexManager | null = null;
+  indexingController: IndexingController | null = null;
+  storeManager: StoreManager | null = null;
   statusBarItem: HTMLElement | null = null;
 
   async onload() {
@@ -35,42 +38,41 @@ export default class EzRAGPlugin extends Plugin {
     this.stateManager = new StateManager(savedData || DEFAULT_DATA);
 
     // Load runner state (per-machine, per-vault, non-synced)
-    // ONLY AVAILABLE ON DESKTOP - mobile doesn't support Node.js modules
     if (Platform.isDesktopApp) {
       this.runnerManager = new RunnerStateManager(this.app, this.manifest.id);
     }
 
+    this.storeManager = new StoreManager(this);
+
+    this.indexingController = new IndexingController({
+      app: this.app,
+      stateManager: this.stateManager,
+      persistState: () => this.saveState(),
+      onStateChange: () => {
+        this.updateStatusBar(this.getStatusBarText());
+      }
+    });
+
     // FIRST-RUN ONBOARDING: Check if API key is set
     const settings = this.stateManager.getSettings();
     const isFirstRun = !settings.apiKey;
-
     if (isFirstRun) {
-      // Show welcome notice with action button
       this.showFirstRunWelcome();
-    } else if (this.runnerManager?.isRunner()) {
-      // Only initialize services on the runner machine (desktop only)
-      await this.initializeServices();
     }
 
     // Add settings tab
     this.addSettingTab(new EzRAGSettingTab(this.app, this));
 
-    // Add status bar
+    // Add status bar + subscribe to controller updates
     this.statusBarItem = this.addStatusBarItem();
     this.updateStatusBar(this.getStatusBarText());
 
     // Register vault events after layout is ready to avoid processing existing files on startup
-    // ONLY REGISTER IF THIS MACHINE IS THE RUNNER
     this.app.workspace.onLayoutReady(() => {
-      if (!this.runnerManager?.isRunner()) {
-        console.log('[EzRAG] Not the runner machine, skipping vault event registration');
-        return;
-      }
-
       this.registerEvent(
         this.app.vault.on('create', (file) => {
           if (file instanceof TFile) {
-            this.indexManager?.onFileCreated(file);
+            this.indexingController?.handleFileCreated(file);
           }
         })
       );
@@ -78,7 +80,7 @@ export default class EzRAGPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on('modify', (file) => {
           if (file instanceof TFile) {
-            this.indexManager?.onFileModified(file);
+            this.indexingController?.handleFileModified(file);
           }
         })
       );
@@ -86,7 +88,7 @@ export default class EzRAGPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on('rename', (file, oldPath) => {
           if (file instanceof TFile) {
-            this.indexManager?.onFileRenamed(file, oldPath);
+            this.indexingController?.handleFileRenamed(file, oldPath);
           }
         })
       );
@@ -94,15 +96,12 @@ export default class EzRAGPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on('delete', (file) => {
           if (file instanceof TFile) {
-            this.indexManager?.onFileDeleted(file.path);
+            this.indexingController?.handleFileDeleted(file.path);
           }
         })
       );
 
-      // Run startup reconciliation after layout is ready (only on runner)
-      if (this.indexManager) {
-        this.indexManager.reconcileOnStartup();
-      }
+      void this.refreshIndexingState('startup');
     });
 
     // Add commands (only available if runner)
@@ -139,23 +138,113 @@ export default class EzRAGPlugin extends Plugin {
 
   onunload() {
     console.log('Unloading EzRAG plugin');
+    this.indexingController?.dispose();
   }
 
+  // New helper methods will be defined later
+
   /**
-   * Initialize Gemini service and IndexManager
+   * Save state to disk
    */
-  async initializeServices(): Promise<void> {
+  async saveState(): Promise<void> {
+    await this.saveData(this.stateManager.exportData());
+  }
+
+  async updateApiKey(value: string): Promise<string> {
+    const trimmed = value.trim();
+    const current = this.stateManager.getSettings().apiKey;
+
+    if (trimmed === current) {
+      return '';
+    }
+
+    if (!trimmed) {
+      this.stateManager.updateSettings({
+        apiKey: '',
+        storeName: '',
+        storeDisplayName: ''
+      });
+      this.geminiService = null;
+      await this.saveState();
+      this.indexingController?.stop();
+      this.updateStatusBar(this.getStatusBarText());
+      return 'API key cleared. Indexing stopped.';
+    }
+
+    this.stateManager.updateSettings({
+      apiKey: trimmed,
+      storeName: '',
+      storeDisplayName: ''
+    });
+    this.geminiService = new GeminiService(trimmed);
+    await this.saveState();
+
+    if (this.runnerManager?.isRunner()) {
+      return await this.refreshIndexingState('api-key');
+    }
+
+    this.updateStatusBar(this.getStatusBarText());
+    return 'API key saved.';
+  }
+
+  async handleRunnerStateChange(): Promise<string> {
+    return await this.refreshIndexingState('runner');
+  }
+
+  openIndexingStatusModal(): void {
+    if (!this.indexingController) return;
+    new IndexingStatusModal(this.app, this.indexingController).open();
+  }
+
+  private async refreshIndexingState(_source: string): Promise<string> {
+    if (!Platform.isDesktopApp || !this.runnerManager) {
+      this.indexingController?.stop();
+      this.updateStatusBar(this.getStatusBarText());
+      return 'Indexing is only available on desktop.';
+    }
+
+    if (!this.runnerManager.isRunner()) {
+      this.indexingController?.stop();
+      this.updateStatusBar(this.getStatusBarText());
+      return 'Runner disabled. Indexing stopped.';
+    }
+
+    const ready = await this.ensureGeminiResources();
+    if (!ready || !this.geminiService) {
+      this.indexingController?.stop();
+      this.updateStatusBar(this.getStatusBarText());
+      return 'Runner enabled but waiting for API configuration.';
+    }
+
+    if (!this.indexingController) {
+      return 'Indexing controller not ready.';
+    }
+
+    const result = await this.indexingController.start(this.geminiService);
+    this.updateStatusBar(this.getStatusBarText());
+
+    if (result === 'started') {
+      return 'Indexing started. Scanning your vault...';
+    }
+
+    if (result === 'resumed') {
+      return 'Indexing resumed.';
+    }
+
+    return 'Indexing already running.';
+  }
+
+  private async ensureGeminiResources(): Promise<boolean> {
     const settings = this.stateManager.getSettings();
 
     if (!settings.apiKey) {
-      console.log('[EzRAG] No API key configured, skipping service initialization');
-      return;
+      return false;
     }
 
-    // Initialize Gemini service
-    this.geminiService = new GeminiService(settings.apiKey);
+    if (!this.geminiService) {
+      this.geminiService = new GeminiService(settings.apiKey);
+    }
 
-    // Get or create FileSearchStore
     if (!settings.storeName) {
       const vaultName = this.app.vault.getName();
       const displayName = `ezrag-${vaultName}`;
@@ -167,43 +256,22 @@ export default class EzRAGPlugin extends Plugin {
           storeDisplayName: displayName
         });
         await this.saveState();
-        console.log('[EzRAG] Created FileSearchStore:', storeName);
       } catch (err) {
         console.error('[EzRAG] Failed to create FileSearchStore:', err);
         new Notice('Failed to create Gemini FileSearchStore. Check API key.');
-        return;
+        return false;
       }
     }
 
-    // Initialize IndexManager (only if runner)
-    if (this.runnerManager?.isRunner()) {
-      this.indexManager = new IndexManager({
-        vault: this.app.vault,
-        app: this.app,
-        stateManager: this.stateManager,
-        geminiService: this.geminiService,
-        vaultName: this.app.vault.getName(),
-        onProgress: (current, total, status) => {
-          this.updateStatusBar(`${status}: ${current}/${total}`);
-        },
-      });
-
-      console.log('[EzRAG] Services initialized (runner mode)');
-    }
-  }
-
-  /**
-   * Save state to disk
-   */
-  async saveState(): Promise<void> {
-    await this.saveData(this.stateManager.exportData());
+    return true;
   }
 
   /**
    * Rebuild index
    */
   async rebuildIndex(): Promise<void> {
-    if (!this.indexManager) {
+    const manager = this.indexingController?.getIndexManager();
+    if (!manager) {
       new Notice('Index manager not initialized');
       return;
     }
@@ -214,7 +282,7 @@ export default class EzRAGPlugin extends Plugin {
     );
 
     if (confirmed) {
-      await this.indexManager.rebuildIndex();
+      await manager.rebuildIndex();
       await this.saveState();
       new Notice('Index rebuild started');
     }
@@ -224,7 +292,8 @@ export default class EzRAGPlugin extends Plugin {
    * Cleanup orphaned documents
    */
   async cleanupOrphans(): Promise<void> {
-    if (!this.indexManager) {
+    const manager = this.indexingController?.getIndexManager();
+    if (!manager) {
       new Notice('Index manager not initialized');
       return;
     }
@@ -236,7 +305,7 @@ export default class EzRAGPlugin extends Plugin {
 
     if (confirmed) {
       try {
-        const deleted = await this.indexManager.cleanupOrphans();
+        const deleted = await manager.cleanupOrphans();
         await this.saveState();
         new Notice(`Cleanup complete: ${deleted} orphaned documents deleted`);
       } catch (err) {
@@ -250,7 +319,8 @@ export default class EzRAGPlugin extends Plugin {
    * Run deduplication with UI
    */
   async runJanitorWithUI(): Promise<void> {
-    if (!this.indexManager) {
+    const manager = this.indexingController?.getIndexManager();
+    if (!manager) {
       new Notice('Index manager not initialized');
       return;
     }
@@ -259,7 +329,7 @@ export default class EzRAGPlugin extends Plugin {
     modal.open();
 
     try {
-      const janitor = this.indexManager.getJanitor();
+      const janitor = manager.getJanitor();
       const stats = await janitor.runDeduplication();
 
       modal.updateStats(stats);
@@ -277,122 +347,6 @@ export default class EzRAGPlugin extends Plugin {
     }
   }
 
-  /**
-   * Get or create a temporary GeminiService for read-only operations
-   * This allows non-runner devices to view store stats and list stores
-   */
-  private getOrCreateGeminiService(): GeminiService | null {
-    // If we already have a service, use it
-    if (this.geminiService) {
-      return this.geminiService;
-    }
-
-    // If no API key, can't create service
-    const apiKey = this.stateManager.getSettings().apiKey;
-    if (!apiKey) {
-      new Notice('Please configure your API key first');
-      return null;
-    }
-
-    // Create temporary service for this operation
-    return new GeminiService(apiKey);
-  }
-
-  /**
-   * Show store stats
-   */
-  async showStoreStats(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
-    if (!service) return;
-
-    const settings = this.stateManager.getSettings();
-    if (!settings.storeName) {
-      new Notice('No store configured');
-      return;
-    }
-
-    try {
-      const store = await service.getStore(settings.storeName);
-
-      const modal = new Modal(this.app);
-      modal.contentEl.createEl('h2', { text: 'Store Statistics' });
-      modal.contentEl.createEl('p', { text: `Name: ${store.displayName}` });
-      modal.contentEl.createEl('p', { text: `ID: ${store.name}` });
-      modal.contentEl.createEl('p', { text: `Created: ${new Date(store.createTime).toLocaleString()}` });
-      modal.contentEl.createEl('p', { text: `Updated: ${new Date(store.updateTime).toLocaleString()}` });
-      modal.open();
-    } catch (err) {
-      console.error('[EzRAG] Failed to fetch store stats:', err);
-      new Notice('Failed to fetch store stats. See console for details.');
-    }
-  }
-
-  /**
-   * List all stores
-   */
-  async listAllStores(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
-    if (!service) return;
-
-    try {
-      const stores = await service.listStores();
-
-      const modal = new Modal(this.app);
-      modal.contentEl.createEl('h2', { text: 'All FileSearchStores' });
-
-      if (stores.length === 0) {
-        modal.contentEl.createEl('p', { text: 'No stores found' });
-      } else {
-        const list = modal.contentEl.createEl('ul');
-        stores.forEach(store => {
-          list.createEl('li', { text: `${store.displayName} (${store.name})` });
-        });
-      }
-
-      modal.open();
-    } catch (err) {
-      console.error('[EzRAG] Failed to list stores:', err);
-      new Notice('Failed to list stores. See console for details.');
-    }
-  }
-
-  /**
-   * Delete current store
-   */
-  async deleteCurrentStore(): Promise<void> {
-    const service = this.getOrCreateGeminiService();
-    if (!service) return;
-
-    const settings = this.stateManager.getSettings();
-    if (!settings.storeName) {
-      new Notice('No store configured');
-      return;
-    }
-
-    const confirmed = await this.confirmAction(
-      'Delete Store',
-      'This will PERMANENTLY delete the FileSearchStore and all indexed documents. This cannot be undone! Continue?'
-    );
-
-    if (confirmed) {
-      try {
-        await service.deleteStore(settings.storeName);
-
-        // Clear store configuration
-        this.stateManager.updateSettings({
-          storeName: '',
-          storeDisplayName: ''
-        });
-        this.stateManager.clearIndex();
-        await this.saveState();
-
-        new Notice('Store deleted successfully');
-      } catch (err) {
-        console.error('[EzRAG] Failed to delete store:', err);
-        new Notice('Failed to delete store. See console for details.');
-      }
-    }
-  }
 
   /**
    * Get index statistics
@@ -429,16 +383,36 @@ export default class EzRAGPlugin extends Plugin {
    * Get status bar text
    */
   private getStatusBarText(): string {
-    if (!this.runnerManager) {
+    if (!Platform.isDesktopApp) {
       return 'Mobile (read-only)';
     }
 
-    if (!this.runnerManager.isRunner()) {
+    if (!this.runnerManager?.isRunner()) {
       return 'Inactive (not runner)';
     }
 
+    if (!this.indexingController || !this.indexingController.isActive()) {
+      const hasKey = Boolean(this.stateManager.getSettings().apiKey);
+      return hasKey ? 'Runner idle' : 'Awaiting API key';
+    }
+
+    const snapshot = this.indexingController.getSnapshot();
     const stats = this.getIndexStats();
-    return `${stats.ready}/${stats.total} indexed`;
+    const phaseLabel = this.formatPhaseLabel(snapshot.phase);
+    return `${phaseLabel}: ${stats.ready}/${stats.total} ready · ${stats.pending} pending`;
+  }
+
+  private formatPhaseLabel(phase: IndexingPhase): string {
+    switch (phase) {
+      case 'scanning':
+        return 'Scanning';
+      case 'indexing':
+        return 'Indexing';
+      case 'paused':
+        return 'Paused';
+      default:
+        return 'Idle';
+    }
   }
 
   /**
@@ -454,7 +428,7 @@ export default class EzRAGPlugin extends Plugin {
   /**
    * Confirm action with modal
    */
-  private async confirmAction(title: string, message: string): Promise<boolean> {
+  async confirmAction(title: string, message: string): Promise<boolean> {
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
       modal.contentEl.createEl('h2', { text: title });

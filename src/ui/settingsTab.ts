@@ -37,26 +37,13 @@ export class EzRAGSettingTab extends PluginSettingTab {
           .setValue(runnerState.isRunner)
           .onChange(async (value) => {
             await this.plugin.runnerManager!.setRunner(value);
+            const message = await this.plugin.handleRunnerStateChange();
 
-            // If enabling runner, initialize services
-            if (value && this.plugin.stateManager.getSettings().apiKey) {
-              await this.plugin.initializeServices();
-            }
-
-            // If disabling runner, clear services
-            if (!value) {
-              this.plugin.indexManager = null;
-              this.plugin.geminiService = null;
-            }
-
-            // Refresh settings display
             this.display();
 
-            new Notice(
-              value
-                ? 'This machine is now the runner. Indexing will start automatically.'
-                : 'Runner disabled. This machine will no longer index files.'
-            );
+            if (message) {
+              new Notice(message);
+            }
           })
         );
 
@@ -88,19 +75,18 @@ export class EzRAGSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Gemini API Key')
       .setDesc('Your Google Gemini API key (get it from ai.google.dev)')
-      .addText(text => text
-        .setPlaceholder('Enter your API key')
-        .setValue(this.plugin.stateManager.getSettings().apiKey)
-        .onChange(async (value) => {
-          this.plugin.stateManager.updateSettings({ apiKey: value });
-          await this.plugin.saveState();
+      .addText(text => {
+        text
+          .setPlaceholder('Enter your API key')
+          .setValue(this.plugin.stateManager.getSettings().apiKey);
 
-          // Re-initialize services if runner
-          if (isRunner && value) {
-            await this.plugin.initializeServices();
+        text.inputEl.addEventListener('change', async () => {
+          const message = await this.plugin.updateApiKey(text.getValue());
+          if (message) {
+            new Notice(message);
           }
-        })
-      );
+        });
+      });
 
     // INDEXING CONTROLS (Desktop Runner Only)
     if (isRunner) {
@@ -207,7 +193,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
       .addButton(button => button
         .setButtonText('View Stats')
         .onClick(async () => {
-          await this.plugin.showStoreStats();
+          await this.plugin.storeManager?.showStoreStats();
         })
       );
 
@@ -218,7 +204,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
       .addButton(button => button
         .setButtonText('List Stores')
         .onClick(async () => {
-          await this.plugin.listAllStores();
+          await this.plugin.storeManager?.listAllStores();
         })
       );
 
@@ -231,7 +217,7 @@ export class EzRAGSettingTab extends PluginSettingTab {
           .setButtonText('Delete Store')
           .setWarning()
           .onClick(async () => {
-            await this.plugin.deleteCurrentStore();
+            await this.plugin.storeManager?.deleteCurrentStore();
           })
         );
     }
@@ -246,6 +232,16 @@ export class EzRAGSettingTab extends PluginSettingTab {
       statusEl.createEl('p', { text: `Ready: ${stats.ready}` });
       statusEl.createEl('p', { text: `Pending: ${stats.pending}` });
       statusEl.createEl('p', { text: `Error: ${stats.error}` });
+
+      new Setting(containerEl)
+        .setName('Live controls')
+        .setDesc('Open the indexing status panel to pause, resume, or rescan')
+        .addButton(button => button
+          .setButtonText('Open status panel')
+          .onClick(() => {
+            this.plugin.openIndexingStatusModal();
+          })
+        );
     }
   }
 }
