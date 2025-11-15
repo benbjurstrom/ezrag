@@ -61,6 +61,12 @@ export class GeminiService {
   async uploadDocument(params: UploadDocumentParams): Promise<string> {
     const { storeName, content, displayName, metadata, mimeType = 'text/markdown', chunkingConfig } = params;
 
+    // Validate content is not empty (safety check - should be caught earlier)
+    const trimmedContent = content.trim();
+    if (trimmedContent.length === 0) {
+      throw new Error('Cannot upload empty file - content must not be empty');
+    }
+
     // Convert content to a File-like object
     const blob = new Blob([content], { type: mimeType });
     const file = new File([blob], displayName, { type: mimeType });

@@ -328,6 +328,27 @@ export class IndexManager {
    * before creating a new one. This prevents duplicates during multi-device sync.
    */
   private async indexFile(file: TFile, content: string, contentHash: string): Promise<void> {
+    // Skip empty files - Gemini API cannot handle empty content
+    const trimmedContent = content.trim();
+    if (trimmedContent.length === 0) {
+      console.log(`[IndexManager] Skipping empty file: ${file.path}`);
+      
+      // Delete old document if exists (file was emptied)
+      const existingState = this.state.getDocState(file.path);
+      if (existingState?.geminiDocumentName) {
+        try {
+          await this.gemini.deleteDocument(existingState.geminiDocumentName);
+        } catch (err) {
+          // Document may have been deleted already, ignore
+          console.log(`[IndexManager] Document already deleted or not found: ${existingState.geminiDocumentName}`);
+        }
+      }
+      
+      // Remove from state (empty files are not indexed)
+      this.state.removeDocState(file.path);
+      return;
+    }
+
     const pathHash = computePathHash(file.path);
     const settings = this.state.getSettings();
 
@@ -335,13 +356,19 @@ export class IndexManager {
     const tags = this.extractTags(file);
 
     // Build metadata
+    // Note: Gemini API doesn't allow duplicate keys in custom_metadata,
+    // so we combine multiple tags into a single comma-separated string
     const metadata = [
       { key: 'obsidian_vault', stringValue: this.vaultName },
       { key: 'obsidian_path', stringValue: file.path },
       { key: 'obsidian_path_hash', stringValue: pathHash },
       { key: 'obsidian_mtime', numericValue: file.stat.mtime },
-      ...tags.map(tag => ({ key: 'tag', stringValue: tag })),
     ];
+
+    // Add tags as a single comma-separated entry if tags exist
+    if (tags.length > 0) {
+      metadata.push({ key: 'tags', stringValue: tags.join(',') });
+    }
 
     // Check if local state has a document ID
     const existingState = this.state.getDocState(file.path);
