@@ -8,8 +8,11 @@
 2. **Read ARCHITECTURE.md** for detailed design, data models, and implementation notes
 3. **Key entry points**:
    - `main.ts` - Plugin lifecycle (start here to understand initialization)
+   - `src/lifecycle/indexingLifecycleCoordinator.ts` - Centralized runner/connection gating & store provisioning
    - `src/indexing/indexingController.ts` - Indexing lifecycle management
    - `src/indexing/indexManager.ts` - Core indexing logic
+   - `src/indexing/filePreparationService.ts` / `documentMetadata.ts` / `documentReplacer.ts` - Shared file ingestion helpers
+   - `src/indexing/persistentQueue.ts` - Queue orchestration, retries, and connection-aware scheduling
    - `src/gemini/geminiService.ts` - Gemini API integration
 
 4. **Build and test**:
@@ -69,10 +72,15 @@ This prevents race conditions and duplicate documents when the same vault is ope
 ### Core Entry Points
 
 - **`main.ts`**: Plugin lifecycle, event registration, command setup
-  - Creates `IndexingController` and `StoreManager`
+  - Creates `IndexingController`, `IndexingLifecycleCoordinator`, and `StoreManager`
   - Registers vault events (after `onLayoutReady()` to prevent startup flooding)
   - Adds runner-only commands (rebuild-index, cleanup-orphans, run-janitor)
-  - Status bar updates via controller subscription
+  - Delegates status bar updates to lifecycle coordinator/controller signals
+
+- **`src/lifecycle/indexingLifecycleCoordinator.ts`**
+  - Owns runner + platform gating, API-key validation, and Gemini store provisioning
+  - Listens to `ConnectionManager` and pauses/resumes `IndexingController`
+  - Provides `requireConnection` helper for commands/settings flows
 
 ### Runner Management
 
@@ -98,10 +106,15 @@ This prevents race conditions and duplicate documents when the same vault is ope
   - Event delegation to IndexManager
 
 - **`src/indexing/indexManager.ts`**: Core indexing orchestrator
-  - Queue management (p-queue with retry logic)
-  - Event handlers (create/modify/rename/delete)
-  - Startup reconciliation (with smart sync to avoid duplicates)
-  - `indexFile()`: Hot path - uses local state only, no remote checks
+  - Consumes shared services for file prep, metadata, queueing, and uploads
+  - Event handlers (create/modify/rename/delete) + startup reconciliation
+  - Maintains hot-path logic without remote reads
+
+- **Shared ingestion helpers**
+  - `filePreparationService.ts`: Single source for reading, trimming, hashing, and tag extraction
+  - `documentMetadata.ts`: Builds Gemini metadata payloads
+  - `documentReplacer.ts`: Delete-before-upload helper that logs and retries gracefully
+  - `persistentQueue.ts`: Connection-aware queue with retry/backoff + persisted state integration
 
 - **`src/indexing/janitor.ts`**: Deduplication & orphan cleanup
   - Manual deduplication UI (finds duplicate/orphaned documents)

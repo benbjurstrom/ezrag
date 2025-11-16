@@ -12,6 +12,7 @@ import { IndexingStatusModal } from './src/ui/indexingStatusModal';
 import { StoreManager } from './src/store/storeManager';
 import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
 import { ConnectionManager, ConnectionState } from './src/connection/connectionManager';
+import { IndexingLifecycleCoordinator } from './src/lifecycle/indexingLifecycleCoordinator';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
@@ -22,9 +23,7 @@ export default class EzRAGPlugin extends Plugin {
   connectionManager!: ConnectionManager;
   statusBarItem: HTMLElement | null = null;
   private unsubscribeConnection?: () => void;
-  private lastConnectionState: ConnectionState | null = null;
-  private pausedByDisconnect = false;
-  private lastApiKeyError?: string;
+  private lifecycleCoordinator: IndexingLifecycleCoordinator | null = null;
 
   async onload() {
     console.log('Loading EzRAG plugin');
@@ -46,12 +45,10 @@ export default class EzRAGPlugin extends Plugin {
 
     // Initialize connection manager
     this.connectionManager = new ConnectionManager();
-    this.lastConnectionState = this.connectionManager.getState();
-    this.lastApiKeyError = this.lastConnectionState.apiKeyError;
 
     // Subscribe to connection changes for auto-pause/resume
     this.unsubscribeConnection = this.connectionManager.subscribe((state) => {
-      this.handleConnectionChange(state);
+      this.lifecycleCoordinator?.handleConnectionChange(state);
     });
 
     // Load runner state (per-machine, per-vault, non-synced)
@@ -78,6 +75,21 @@ export default class EzRAGPlugin extends Plugin {
       },
       connectionManager: this.connectionManager,
     });
+
+    this.lifecycleCoordinator = new IndexingLifecycleCoordinator({
+      app: this.app,
+      stateManager: this.stateManager,
+      runnerManager: this.runnerManager,
+      connectionManager: this.connectionManager,
+      getGeminiService: () => this.getGeminiService(),
+      getIndexingController: () => this.indexingController,
+      saveState: () => this.saveState(),
+      onStatusChange: () => {
+        this.updateStatusBar(this.getStatusBarText());
+      },
+    });
+
+    this.lifecycleCoordinator.handleConnectionChange(this.connectionManager.getState());
 
     // FIRST-RUN ONBOARDING: Check if API key is set
     const settings = this.stateManager.getSettings();
@@ -215,17 +227,7 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   requireConnection(action: string): boolean {
-    const state = this.connectionManager.getState();
-    if (state.connected) {
-      return true;
-    }
-
-    const reason = state.online
-      ? (state.apiKeyError ?? 'Gemini API key needs to be validated in settings.')
-      : 'No internet connection detected.';
-
-    new Notice(`Cannot ${action}: ${reason}`);
-    return false;
+    return this.lifecycleCoordinator?.requireConnection(action) ?? this.connectionManager.isConnected();
   }
 
   isConnected(): boolean {
@@ -257,7 +259,6 @@ export default class EzRAGPlugin extends Plugin {
       this.connectionManager.setApiKeyValid(false);
       await this.saveState();
       this.indexingController?.stop();
-      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
       return { valid: false, message: 'API key cleared' };
     }
@@ -297,7 +298,6 @@ export default class EzRAGPlugin extends Plugin {
       console.error('[EzRAG] API key validation failed:', err);
       this.geminiService = null;
       this.indexingController?.stop();
-      this.pausedByDisconnect = false;
       this.updateStatusBar(this.getStatusBarText());
 
       // Distinguish error types
@@ -344,48 +344,6 @@ export default class EzRAGPlugin extends Plugin {
     }
   }
 
-  /**
-   * Handle connection state changes (online/offline, API key validity)
-   */
-  private handleConnectionChange(state: ConnectionState): void {
-    const previousConnected = this.lastConnectionState?.connected ?? state.connected;
-    const justLost = previousConnected && !state.connected;
-    const justRestored = !previousConnected && state.connected;
-    this.lastConnectionState = state;
-
-    if (state.apiKeyError && state.apiKeyError !== this.lastApiKeyError) {
-      new Notice(`EzRAG: ${state.apiKeyError}`);
-    }
-    this.lastApiKeyError = state.apiKeyError;
-
-    // Update status bar whenever connection state changes
-    this.updateStatusBar(this.getStatusBarText());
-
-    // Auto-pause/resume indexing based on connection (only if runner)
-    if (!this.runnerManager?.isRunner() || !this.indexingController) {
-      return;
-    }
-
-    const isActive = this.indexingController.isActive();
-    const isPaused = this.indexingController.isPaused();
-
-    if (justLost && isActive && !isPaused) {
-      console.log('[EzRAG] Connection lost, pausing indexing');
-      this.indexingController.pause();
-      this.pausedByDisconnect = true;
-      new Notice('EzRAG: Disconnected. Indexing paused.');
-    } else if (justRestored) {
-      console.log('[EzRAG] Connection restored');
-      if (this.pausedByDisconnect && isPaused) {
-        this.indexingController.resume();
-        this.pausedByDisconnect = false;
-        new Notice('EzRAG: Connection restored. Resuming indexing.');
-      } else if (!isActive) {
-        void this.refreshIndexingState('connection');
-      }
-    }
-  }
-
   async handleRunnerStateChange(): Promise<string> {
     return await this.refreshIndexingState('runner');
   }
@@ -408,77 +366,15 @@ export default class EzRAGPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  private async refreshIndexingState(_source: string): Promise<string> {
-    if (!Platform.isDesktopApp || !this.runnerManager) {
-      this.indexingController?.stop();
-      this.pausedByDisconnect = false;
-      this.updateStatusBar(this.getStatusBarText());
-      return 'Indexing is only available on desktop.';
+  private async refreshIndexingState(source: string): Promise<string> {
+    if (!this.lifecycleCoordinator) {
+      return 'Indexing coordinator not ready.';
     }
-
-    if (!this.runnerManager.isRunner()) {
-      this.indexingController?.stop();
-      this.pausedByDisconnect = false;
-      this.updateStatusBar(this.getStatusBarText());
-      return 'Runner disabled. Indexing stopped.';
-    }
-
-    const ready = await this.ensureGeminiResources();
-    if (!ready || !this.geminiService) {
-      this.indexingController?.stop();
-      this.pausedByDisconnect = false;
-      this.updateStatusBar(this.getStatusBarText());
-      return 'Runner enabled but waiting for API configuration.';
-    }
-
-    if (!this.indexingController) {
-      return 'Indexing controller not ready.';
-    }
-
-    const result = await this.indexingController.start(this.geminiService);
-    this.updateStatusBar(this.getStatusBarText());
-
-    if (result === 'started') {
-      return 'Indexing started. Scanning your vault...';
-    }
-
-    if (result === 'resumed') {
-      return 'Indexing resumed.';
-    }
-
-    return 'Indexing already running.';
+    return this.lifecycleCoordinator.refreshIndexingState(source);
   }
 
   async ensureGeminiResources(): Promise<boolean> {
-    const settings = this.stateManager.getSettings();
-
-    const service = this.getGeminiService();
-    if (!service) {
-      return false;
-    }
-
-    if (!settings.storeName) {
-      if (!this.requireConnection('create a Gemini FileSearch store')) {
-        return false;
-      }
-      const vaultName = this.app.vault.getName();
-      const displayName = `ezrag-${vaultName}`;
-
-      try {
-        const storeName = await service.getOrCreateStore(displayName);
-        this.stateManager.updateSettings({
-          storeName,
-          storeDisplayName: displayName
-        });
-        await this.saveState();
-      } catch (err) {
-        console.error('[EzRAG] Failed to create FileSearchStore:', err);
-        new Notice('Failed to create Gemini FileSearchStore. Check API key.');
-        return false;
-      }
-    }
-
-    return true;
+    return this.lifecycleCoordinator?.ensureGeminiResources() ?? false;
   }
 
   /**

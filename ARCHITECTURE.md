@@ -52,10 +52,17 @@ Build an Obsidian plugin that:
 │  └─────┬──────┘  └──────┬───────┘  └──────────┬─────────┘  │
 │        │                │                     │             │
 │  ┌─────▼────────────────▼─────────────────────▼─────────┐  │
-│  │   Runner Check: isRunner() → Gate all indexing      │  │
-│  └──────────────────────┬──────────────────────────────┘  │
+│  │ IndexingLifecycleCoordinator                        │  │
+│  │  • Runner/platform gating                           │  │
+│  │  • API key + store provisioning                     │  │
+│  │  • Connection-driven pause/resume                   │  │
+│  └─────┬───────────────────────────────────────────────┘  │
+│        │                                                  │
+│  ┌─────▼────────────────────────────────────────────────┐ │
+│  │   Runner Check: isRunner() → Gate all indexing       │ │
+│  └──────────────────────┬───────────────────────────────┘ │
 │                         │ (if runner = true)               │
-│  ┌──────────────────────▼──────────────────────────────┐  │
+│  ┌──────────────────────▼───────────────────────────────┐ │
 │  │     Indexing Controller (indexingController.ts)     │  │
 │  │  • Lifecycle management (start/stop/pause/resume)   │  │
 │  │  • Phase tracking (idle/scanning/indexing/paused)   │  │
@@ -64,10 +71,19 @@ Build an Obsidian plugin that:
 │                         │                                  │
 │  ┌──────────────────────▼──────────────────────────────┐  │
 │  │          Index Manager (indexManager.ts)             │  │
-│  │  • Queue management (p-queue)                        │  │
+│  │  • Shared file prep + metadata helpers               │  │
+│  │  • PersistentQueue orchestration                     │  │
 │  │  • Event handling (create/modify/rename/delete)      │  │
 │  │  • Startup reconciliation                            │  │
 │  │  • Core indexing operations                          │  │
+│  └──────────────────────┬──────────────────────────────┘  │
+│                         │                                  │
+│  ┌──────────────────────▼──────────────────────────────┐  │
+│  │ Shared Ingestion Helpers                            │  │
+│  │  • FilePreparationService (hashing/tags)            │  │
+│  │  • DocumentMetadata builder                         │  │
+│  │  • DocumentReplacer (delete + upload)               │  │
+│  │  • PersistentQueue (retry/throttle/persistence)     │  │
 │  └──────────────────────┬──────────────────────────────┘  │
 │                         │                                  │
 │  ┌──────────────────────▼──────────────────────────────┐  │
@@ -116,11 +132,11 @@ User saves note → Vault event → IndexingController.handleFileModified()
                                     ↓ YES (runner machine)
                           IndexManager.onFileModified()
                                     ↓
-                          Compute content hash
+                          FilePreparationService.prepare() → content hash/path hash/tags
                                     ↓
-                          Hash different? → queueIndexJob() with retry logic
+                          Hash different? → queueIndexJob() via PersistentQueue (retry logic)
                                     ↓
-                          Job executes (via p-queue):
+                          Job executes (PersistentQueue → PQueue worker):
                           1. Check if local state has document ID
                           2. If yes: Delete old doc (local state is source of truth)
                           3. If no: Skip delete (new file, no old doc exists)
@@ -186,6 +202,8 @@ User query → Chat UI → geminiService.fileSearch()
 src/
 ├── main.ts                  # Plugin entry point
 ├── types.ts                 # Shared TypeScript interfaces
+├── lifecycle/
+│   └── indexingLifecycleCoordinator.ts # Runner/connection gating + store provisioning
 ├── runner/
 │   └── runnerState.ts      # Per-machine runner configuration (localStorage-based)
 ├── state/
@@ -197,6 +215,10 @@ src/
 ├── indexing/
 │   ├── indexManager.ts     # Main indexing orchestrator
 │   ├── indexingController.ts  # Indexing lifecycle controller (start/stop/pause/resume)
+│   ├── filePreparationService.ts # Shared file read/hash/tag prep
+│   ├── documentMetadata.ts  # Gemini metadata builder
+│   ├── documentReplacer.ts  # Delete-before-upload helper
+│   ├── persistentQueue.ts   # Connection-aware queue wrapper
 │   ├── janitor.ts          # Deduplication and sync conflict resolution
 │   ├── hashUtils.ts        # Content hashing utilities
 ├── store/
@@ -211,8 +233,6 @@ src/
 ├── mcp/
 │   └── server.ts           # MCP server
 └── utils/
-    ├── logger.ts           # Logging utility
-    ├── metadata.ts         # Metadata builder
     └── vault.ts            # Vault-specific utilities (vault key generation)
 ```
 
@@ -295,10 +315,21 @@ Since all hashing is used for indexing operations (which only run on the runner 
 
 - Listens for browser `online`/`offline` events and records API key validation status sourced from `main.ts`
 - Derives a single `connected` flag (online **and** key valid) plus friendly `apiKeyError` copy for UI surfaces
-- Notifies subscribers (status bar, indexing controller, queue) so we can pause indexing when disconnected and auto-resume when back online
-- Centralizes connection checks for commands/settings/queue processing via helpers such as `requireConnection()`
+- Feeds `IndexingLifecycleCoordinator` + `PersistentQueue` so they can pause/resume indexing when disconnected and auto-resume when back online
+- Persists the latest API key error string so lifecycle/UI layers can show actionable notices
 
-### 6.3 Gemini Service ([`geminiService.ts`](src/gemini/geminiService.ts))
+### 6.3 Indexing Lifecycle Coordinator ([`indexingLifecycleCoordinator.ts`](src/lifecycle/indexingLifecycleCoordinator.ts))
+
+Glues together `main.ts`, runner state, connection status, and the indexing controller.
+
+- Instantiated during plugin load and provided with callbacks to read the current `GeminiService` and `IndexingController`
+- Owns `requireConnection()` + `ensureGeminiResources()` helpers so commands/settings flows have a single source of truth
+- Automatically provisions a FileSearch store (named after the vault) once a valid API key is supplied
+- Listens to `ConnectionManager` state and pauses/resumes `IndexingController` when connectivity changes
+- Tracks whether indexing was paused due to disconnect so it can auto-resume when the connection returns
+- Emits friendly status strings (used by status bar + notices) describing why indexing is stopped/paused
+
+### 6.4 Gemini Service ([`geminiService.ts`](src/gemini/geminiService.ts))
 
 **Obsidian-agnostic** - can be used by both plugin and MCP server.
 
@@ -314,7 +345,7 @@ Since all hashing is used for indexing operations (which only run on the runner 
 - `listStores()` - List all stores for API key
 - `deleteStore()` - Delete a FileSearchStore
 
-### 6.4 Index Manager ([`indexManager.ts`](src/indexing/indexManager.ts))
+### 6.5 Index Manager ([`indexManager.ts`](src/indexing/indexManager.ts))
 
 Orchestrates all indexing operations.
 
@@ -337,10 +368,18 @@ Orchestrates all indexing operations.
 
 #### Queue persistence, throttling, and deduplication
 
+- `PersistentQueue` wraps `p-queue` to enforce connection-aware scheduling, retry/backoff, and timer-driven throttling
 - The queue is persisted inside plugin state (`IndexState.queue`) so uploads survive reloads/crashes
 - Each entry carries a `readyAt` timestamp derived from the configurable `uploadThrottleMs`; edits reset the countdown so rapid saves collapse into one upload
 - Entries include retry counters + last attempt timestamps and are drained only when the connection manager reports `connected`
 - Empty files are filtered before enqueueing and, if needed, schedule remote deletions without wasting upload slots
+
+#### Shared file preparation & metadata helpers
+
+- `FilePreparationService` centralizes the "read → trim → hash → tag extraction" workflow so every ingestion path behaves consistently
+- `documentMetadata.ts` builds the Gemini `customMetadata` payload once, ensuring metadata changes propagate everywhere
+- `DocumentReplacer` performs delete-before-upload semantics (with graceful handling when the doc is already gone) and logs uploads in one place
+- These helpers make unit testing easier and keep hot-path logic inside `indexManager.ts` minimal
 
 #### Smart Reconciliation for Rebuild Index
 
@@ -373,7 +412,7 @@ Orchestrates all indexing operations.
 
 **Implementation**: See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) lines 78-163 for the complete smart reconciliation logic.
 
-### 6.4.1 Indexing Controller ([`indexingController.ts`](src/indexing/indexingController.ts))
+### 6.5.1 Indexing Controller ([`indexingController.ts`](src/indexing/indexingController.ts))
 
 Manages indexing lifecycle and state transitions.
 
@@ -400,7 +439,7 @@ Manages indexing lifecycle and state transitions.
 - Notifies listeners on phase/stats changes
 - Integrates with main plugin for status bar updates
 
-### 6.5 Store Manager ([`storeManager.ts`](src/store/storeManager.ts))
+### 6.6 Store Manager ([`storeManager.ts`](src/store/storeManager.ts))
 
 Handles FileSearchStore management operations.
 
@@ -414,7 +453,7 @@ Handles FileSearchStore management operations.
 
 **Usage:** Allows non-runner devices (mobile, desktop non-runner) to view store information even though they can't index.
 
-### 6.6 Settings UI ([`settingsTab.ts`](src/ui/settingsTab.ts))
+### 6.7 Settings UI ([`settingsTab.ts`](src/ui/settingsTab.ts))
 
 **File:** [`src/ui/settingsTab.ts`](src/ui/settingsTab.ts)
 
@@ -460,7 +499,7 @@ The settings UI adapts based on platform and runner status:
 - Store management methods use `getOrCreateGeminiService()` helper to create temporary GeminiService for non-runner devices
 - This allows mobile/non-runner devices to view store information even though they can't index
 
-### 6.7 Indexing Queue Modal ([`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts))
+### 6.8 Indexing Queue Modal ([`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts))
 
 Live view of pending uploads/deletes and their throttle countdowns.
 
@@ -474,7 +513,7 @@ Live view of pending uploads/deletes and their throttle countdowns.
 
 **Usage:** Opened from the "Queue monitor" button in settings. Helps users reason about deferred work caused by throttling or offline state.
 
-### 6.8 Runner Pattern for Multi-Device Vaults
+### 6.9 Runner Pattern for Multi-Device Vaults
 
 **Problem:** In multi-device setups (laptop + desktop), we need to designate ONE machine as the "runner" responsible for indexing. Otherwise:
 - Multiple devices index simultaneously → API overload
@@ -538,7 +577,7 @@ Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local
 
 ---
 
-### 6.9 Janitor Progress Modal
+### 6.10 Janitor Progress Modal
 
 **Manual deduplication UI** shown when user clicks "Run Deduplication" in settings.
 
@@ -552,7 +591,7 @@ Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local
 
 ---
 
-### 6.10 Initial Indexing Progress View *(Replaced by IndexingStatusModal)*
+### 6.11 Initial Indexing Progress View *(Replaced by IndexingStatusModal)*
 
 **Status:** The planned `progressView.ts` has been replaced by [`indexingStatusModal.ts`](src/ui/indexingStatusModal.ts), which provides:
 - Phase indicators (scanning, indexing, paused, idle)
@@ -564,31 +603,30 @@ Normal vault files sync via Obsidian Sync / git / Dropbox. We need machine-local
 
 The IndexingStatusModal is opened on-demand from settings, providing better UX than a persistent progress view. It subscribes to `IndexingController` for real-time updates during both initial indexing and ongoing operations.
 
-### 6.11 Main Plugin ([`main.ts`](main.ts))
+### 6.12 Main Plugin ([`main.ts`](main.ts))
 
 **File:** [`main.ts`](main.ts)
 
 **Implementation:** See [`main.ts`](main.ts) for the complete `EzRAGPlugin` class, including:
 - `onload()` - Plugin initialization with deep merge for nested settings
-  - Creates `IndexingController` instance
-  - Creates `StoreManager` instance
+  - Creates `ConnectionManager`, `IndexingController`, `StoreManager`, and the `IndexingLifecycleCoordinator`
   - Registers vault events after `onLayoutReady()` to prevent startup flooding
   - Adds commands (rebuild-index, cleanup-orphans, run-janitor) - runner-only
-- `onunload()` - Cleanup (disposes IndexingController)
-- `refreshIndexingState()` - Start/stop indexing based on runner status and API key
-- `ensureGeminiResources()` - Create GeminiService and FileSearchStore if needed
+- `onunload()` - Cleanup (disposes controller, unsubscribes from connection changes)
+- `refreshIndexingState()` / `ensureGeminiResources()` - Delegates to the lifecycle coordinator to gate indexing + provision Gemini stores
+- `requireConnection()` - Proxy helper that surfaces friendly notices from the lifecycle coordinator (used by commands/settings flows)
 - `runJanitorWithUI()` - Run deduplication with progress modal
 - `rebuildIndex()` - Manual rebuild (with confirmation)
 - `cleanupOrphans()` - Remove orphaned documents (with confirmation)
-- `updateApiKey()` - Handle API key changes (stops indexing if cleared)
-- `handleRunnerStateChange()` - Handle runner toggle (starts/stops indexing)
+- `updateApiKey()` / `validateAndUpdateApiKey()` - Handle API key changes (stops indexing if cleared, validates remotely, updates connection state)
+- `handleRunnerStateChange()` - Handle runner toggle (delegates to lifecycle coordinator)
 - `openIndexingStatusModal()` - Open indexing status/controls modal
 - `getIndexStats()` - Get index statistics
-- `updateStatusBar()` - Update status bar text (real-time via controller subscription)
+- `updateStatusBar()` - Update status bar text (real-time via controller + lifecycle coordinator callbacks)
 - `showFirstRunWelcome()` - First-run onboarding notice
 - `confirmAction()` - Reusable confirmation modal helper
 
-### 6.12 Janitor Pattern for Deduplication
+### 6.13 Janitor Pattern for Deduplication
 
 **Problem:** Multi-device sync or interrupted operations can cause stale or duplicate documents in Gemini that don't match the runner's current local state.
 
@@ -638,11 +676,11 @@ Stale documents created from sync edge cases are cleaned up by manual Janitor ru
 
 ### Example: Frontmatter Tag Extraction
 
-**Implementation:** Tag extraction is implemented directly in `IndexManager.extractTags()` using MetadataCache. See [`src/indexing/indexManager.ts`](src/indexing/indexManager.ts) for the implementation that extracts tags from frontmatter.
+**Implementation:** Tag extraction lives inside `FilePreparationService` so every ingestion path (hot events, rebuilds, queue replays) reuses the same logic. See [`src/indexing/filePreparationService.ts`](src/indexing/filePreparationService.ts) for the helper that pulls `frontmatter.tags` via `app.metadataCache` during `prepare()`.
 
 ### Example: Query with Metadata Filter
 
-**IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.5).
+**IMPORTANT:** Metadata filtering is **only available during query operations** (generateContent, documents.query). You **cannot** filter documents by metadata when listing them via `listDocuments()`. To find documents by metadata, you must list all documents and filter them in memory (see Janitor implementation in Section 6.13).
 
 **Implementation:** Metadata filtering examples are documented here for reference. The production implementation lives inside the chat interface (`chatView.ts`). Key differences:
 - `generateContent` API: Uses `metadataFilter` (string, simple syntax)
