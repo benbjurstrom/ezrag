@@ -67,6 +67,70 @@ export class EzRAGSettingTab extends PluginSettingTab {
       });
     }
 
+    // MCP Server Section (visible on all platforms)
+    new Setting(containerEl).setName('MCP Server').setHeading();
+
+    const mcpSettings = this.plugin.stateManager.getSettings().mcpServer;
+    const mcpStatus = this.plugin.getMCPServerStatus();
+
+    new Setting(containerEl)
+      .setName('Enable MCP server')
+      .setDesc('Start an MCP server to allow external tools (like Claude Code) to query your notes')
+      .addToggle(toggle => toggle
+        .setValue(mcpSettings.enabled)
+        .onChange(async (value) => {
+          await this.plugin.handleMCPServerToggle(value);
+          this.display(); // Refresh to show/hide connection info
+        })
+      );
+
+    if (mcpSettings.enabled) {
+      // Show status
+      const statusSetting = new Setting(containerEl)
+        .setName('Server status')
+        .setDesc(mcpStatus.running ? `Running at ${mcpStatus.url}` : 'Stopped');
+
+      if (mcpStatus.running) {
+        // Add copy URL button
+        statusSetting.addButton(button => button
+          .setButtonText('Copy URL')
+          .onClick(() => {
+            navigator.clipboard.writeText(mcpStatus.url);
+            new Notice('MCP server URL copied to clipboard');
+          })
+        );
+      }
+
+      // Port configuration
+      new Setting(containerEl)
+        .setName('Server port')
+        .setDesc('Port for the MCP server (requires restart if server is running)')
+        .addText(text => text
+          .setPlaceholder('42427')
+          .setValue(String(mcpSettings.port))
+          .onChange(async (value) => {
+            const port = parseInt(value, 10);
+            if (!isNaN(port) && port > 0 && port < 65536) {
+              await this.plugin.updateMCPServerPort(port);
+              this.display(); // Refresh to show new URL
+            } else {
+              new Notice('Invalid port number. Must be between 1 and 65535.');
+            }
+          })
+        );
+
+      // Connection instructions
+      containerEl.createDiv({
+        cls: 'setting-item-description',
+        text: 'Connect using Claude Code: claude mcp add --transport http ezrag-obsidian ' + mcpStatus.url
+      });
+
+      containerEl.createDiv({
+        cls: 'setting-item-description',
+        text: 'Tools available: keywordSearch (vault search), semanticSearch (RAG search), note:///<path> (read notes)'
+      });
+    }
+
     // Store Management Section (Read-only operations visible on all platforms)
     new Setting(containerEl)
       .setName('Gemini FileStores')

@@ -14,6 +14,12 @@ export interface PluginSettings {
   maxConcurrentUploads: number; // Default: 2
   chunkingConfig: ChunkingConfig; // Global chunking strategy
   uploadThrottleMs: number; // Delay before uploading modified documents
+  mcpServer: MCPServerSettings; // MCP server configuration
+}
+
+export interface MCPServerSettings {
+  enabled: boolean; // Whether MCP server is enabled
+  port: number; // HTTP server port (default: 3000)
 }
 
 export interface ChunkingConfig {
@@ -68,6 +74,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     maxOverlapTokens: 50,
   },
   uploadThrottleMs: 120000,
+  mcpServer: {
+    enabled: false,
+    port: 42427, // Random high port to avoid common conflicts
+  },
 };
 
 export const DEFAULT_DATA: PersistedData = {

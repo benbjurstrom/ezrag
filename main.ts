@@ -14,6 +14,7 @@ import { StoreManager } from './src/store/storeManager';
 import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
 import { ConnectionManager, ConnectionState } from './src/connection/connectionManager';
 import { IndexingLifecycleCoordinator } from './src/lifecycle/indexingLifecycleCoordinator';
+import { MCPServer } from './src/mcp/server';
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
@@ -24,6 +25,7 @@ export default class EzRAGPlugin extends Plugin {
   storeManager: StoreManager | null = null;
   connectionManager!: ConnectionManager;
   statusBarItem: HTMLElement | null = null;
+  mcpServer: MCPServer | null = null;
   private unsubscribeConnection?: () => void;
   private lifecycleCoordinator: IndexingLifecycleCoordinator | null = null;
 
@@ -48,6 +50,10 @@ export default class EzRAGPlugin extends Plugin {
         chunkingConfig: {
           ...DEFAULT_DATA.settings.chunkingConfig,
           ...(savedData.settings.chunkingConfig || {})
+        },
+        mcpServer: {
+          ...DEFAULT_DATA.settings.mcpServer,
+          ...(savedData.settings.mcpServer || {})
         }
       };
     }
@@ -201,10 +207,22 @@ export default class EzRAGPlugin extends Plugin {
         void this.openChatInterface();
       }
     });
+
+    // Start MCP server if enabled
+    const mcpSettings = this.stateManager.getSettings().mcpServer;
+    if (mcpSettings.enabled) {
+      void this.startMCPServer();
+    }
   }
 
   onunload() {
     console.log('Unloading EzRAG plugin');
+
+    // Stop MCP server if running
+    if (this.mcpServer) {
+      void this.mcpServer.stop();
+    }
+
     this.unsubscribeConnection?.();
     this.unsubscribeConnection = undefined;
     this.connectionManager?.dispose();
@@ -555,6 +573,108 @@ export default class EzRAGPlugin extends Plugin {
       default:
         return 'Idle';
     }
+  }
+
+  /**
+   * Start MCP server
+   */
+  async startMCPServer(): Promise<void> {
+    if (this.mcpServer) {
+      console.log('[EzRAG] MCP server already running');
+      return;
+    }
+
+    const settings = this.stateManager.getSettings().mcpServer;
+    try {
+      this.mcpServer = new MCPServer({
+        app: this.app,
+        stateManager: this.stateManager,
+        getGeminiService: () => this.getGeminiService(),
+        port: settings.port
+      });
+
+      await this.mcpServer.start();
+      new Notice(`MCP server started on port ${settings.port}`);
+    } catch (err) {
+      console.error('[EzRAG] Failed to start MCP server:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to start MCP server: ${errorMessage}`);
+      this.mcpServer = null;
+    }
+  }
+
+  /**
+   * Stop MCP server
+   */
+  async stopMCPServer(): Promise<void> {
+    if (!this.mcpServer) {
+      return;
+    }
+
+    try {
+      await this.mcpServer.stop();
+      this.mcpServer = null;
+      new Notice('MCP server stopped');
+    } catch (err) {
+      console.error('[EzRAG] Failed to stop MCP server:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to stop MCP server: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Handle MCP server enable/disable toggle
+   */
+  async handleMCPServerToggle(enabled: boolean): Promise<void> {
+    this.stateManager.updateSettings({
+      mcpServer: {
+        ...this.stateManager.getSettings().mcpServer,
+        enabled
+      }
+    });
+    await this.saveState();
+
+    if (enabled) {
+      await this.startMCPServer();
+    } else {
+      await this.stopMCPServer();
+    }
+  }
+
+  /**
+   * Update MCP server port
+   */
+  async updateMCPServerPort(port: number): Promise<void> {
+    const wasRunning = this.mcpServer !== null;
+
+    // Stop if running
+    if (wasRunning) {
+      await this.stopMCPServer();
+    }
+
+    // Update settings
+    this.stateManager.updateSettings({
+      mcpServer: {
+        ...this.stateManager.getSettings().mcpServer,
+        port
+      }
+    });
+    await this.saveState();
+
+    // Restart if was running
+    if (wasRunning) {
+      await this.startMCPServer();
+    }
+  }
+
+  /**
+   * Get MCP server status
+   */
+  getMCPServerStatus(): { running: boolean; url: string } {
+    if (this.mcpServer) {
+      return this.mcpServer.getStatus();
+    }
+    return { running: false, url: '' };
   }
 
   /**

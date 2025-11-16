@@ -114,7 +114,6 @@ Build an Obsidian plugin that:
 ┌─────────────────────────────────────────────────────────────┐
 │              MCP Server (external tools)                    │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  • Reads .obsidian/plugins/ezrag/data.json             │ │
 │  │  • Exposes keywordSearch tool                          │ │
 │  │  • Exposes semanticSearch tool (via Gemini)            │ │
 │  │  • Shares `geminiService.ts` and `state.ts`                │ │
@@ -270,7 +269,7 @@ When uploading a document, we attach metadata with the following structure:
 
 All core plugin features (state management, indexing engine, chat UI, queue throttling, and connection awareness) are implemented. The primary remaining roadmap item is the MCP server so external tools can query the vault without going through Obsidian's UI. Outstanding pieces:
 
-- Build a standalone MCP server (`mcp/server.ts`) that wraps the existing `StateManager` and `GeminiService` utilities
+- Build a standalone MCP server (`mcp/server.ts`) that wraps the existing `GeminiService` utilities
 - Expose tools such as `keywordSearch` (local vault scan) and `semanticSearch` (Gemini FileSearch) plus a `note` resource for retrieving file contents by path
 - Define authentication/connection strategy so the MCP server can reuse the saved API key without duplicating storage logic
 - Document setup/testing flow so developers can connect MCP-aware clients (e.g., Claude Code) to the plugin

@@ -31,7 +31,10 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins],
+		...builtins,
+		// Add node: protocol prefixed versions for compatibility
+		...builtins.map(m => `node:${m}`)
+	],
 	format: "cjs",
 	target: "es2020",
 	logLevel: "info",
