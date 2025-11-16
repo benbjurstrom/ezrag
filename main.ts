@@ -6,6 +6,7 @@ import { DEFAULT_DATA } from './src/types';
 import { GeminiService } from './src/gemini/geminiService';
 import { IndexingController, IndexingPhase } from './src/indexing/indexingController';
 import { RunnerStateManager } from './src/runner/runnerState';
+import { IndexStateStorageManager } from './src/storage/indexStateStorageManager';
 import { JanitorProgressModal } from './src/ui/janitorProgressModal';
 import { EzRAGSettingTab } from './src/ui/settingsTab';
 import { IndexingStatusModal } from './src/ui/indexingStatusModal';
@@ -17,6 +18,7 @@ import { IndexingLifecycleCoordinator } from './src/lifecycle/indexingLifecycleC
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
   runnerManager: RunnerStateManager | null = null; // Only on desktop
+  indexStateStorage!: IndexStateStorageManager; // localStorage for index/queue
   geminiService: GeminiService | null = null;
   indexingController: IndexingController | null = null;
   storeManager: StoreManager | null = null;
@@ -28,20 +30,34 @@ export default class EzRAGPlugin extends Plugin {
   async onload() {
     console.log('Loading EzRAG plugin');
 
-    // Load persisted data with proper deep merge for nested objects
+    // Initialize localStorage manager for index/queue data (device-specific, non-synced)
+    this.indexStateStorage = new IndexStateStorageManager(this.app, this.manifest.id);
+
+    // Load settings from data.json (synced across devices)
     const savedData = await this.loadData();
-    if (savedData) {
-      // Deep merge nested chunkingConfig
-      savedData.settings = {
+
+    // Load index state from localStorage (device-specific, never synced)
+    const indexState = this.indexStateStorage.getState();
+
+    // Merge settings from data.json with defaults
+    let mergedSettings = DEFAULT_DATA.settings;
+    if (savedData?.settings) {
+      mergedSettings = {
         ...DEFAULT_DATA.settings,
         ...savedData.settings,
         chunkingConfig: {
           ...DEFAULT_DATA.settings.chunkingConfig,
-          ...(savedData.settings?.chunkingConfig || {})
+          ...(savedData.settings.chunkingConfig || {})
         }
       };
     }
-    this.stateManager = new StateManager(savedData || DEFAULT_DATA);
+
+    // Construct unified state from both sources
+    this.stateManager = new StateManager({
+      version: savedData?.version ?? DEFAULT_DATA.version,
+      settings: mergedSettings,
+      index: indexState
+    });
 
     // Initialize connection manager
     this.connectionManager = new ConnectionManager();
@@ -199,10 +215,16 @@ export default class EzRAGPlugin extends Plugin {
   // New helper methods will be defined later
 
   /**
-   * Save state to disk
+   * Save state using dual-persistence:
+   * - Settings → data.json (synced across devices)
+   * - Index/Queue → localStorage (device-specific, non-synced)
    */
   async saveState(): Promise<void> {
-    await this.saveData(this.stateManager.exportData());
+    // Save settings to data.json (synced)
+    await this.saveData(this.stateManager.exportSettings());
+
+    // Save index state to localStorage (device-specific)
+    this.indexStateStorage.setState(this.stateManager.exportIndexState());
   }
 
   /**

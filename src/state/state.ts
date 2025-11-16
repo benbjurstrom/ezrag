@@ -96,6 +96,31 @@ export class StateManager {
     this.data.index.queue = [];
   }
 
+  /**
+   * Export settings for data.json persistence.
+   * Returns only settings and version (synced data).
+   */
+  exportSettings(): { version: number; settings: PluginSettings } {
+    return {
+      version: this.data.version,
+      settings: structuredClone(this.data.settings)
+    };
+  }
+
+  /**
+   * Export index state for localStorage persistence.
+   * Returns only docs and queue (device-specific data).
+   */
+  exportIndexState(): { docs: Record<string, IndexedDocState>; queue: IndexQueueEntry[] } {
+    return {
+      docs: structuredClone(this.data.index.docs),
+      queue: structuredClone(this.data.index.queue)
+    };
+  }
+
+  /**
+   * Export complete data structure (for backwards compatibility).
+   */
   exportData(): PersistedData {
     return structuredClone(this.data);
   }
