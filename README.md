@@ -4,8 +4,6 @@ This plugin adds semantic search and AI chat for your Obsidian vault using Googl
 
 <img width="716" height="507" alt="Chat Interface Screenshot" src="https://github.com/user-attachments/assets/4026c1aa-0a9e-43f0-bbb8-31b95e645244" />
 
-*AI chat with your notes*
-
 ## Setup
 
 ### Requirements
@@ -45,12 +43,8 @@ Since EzRAG is is still in development and hasn't been submitted to the Obsidian
 3. **Enable Indexing** (Desktop only)  
    Settings → EzRAG → Toggle "This machine is the runner"
 
-Note that you should only enable the runner for a particular vault on a single machine or else bad things will happen.
-
 The plugin will automatically create a Gemini FileSearch store and begin indexing your notes.
 <img width="826" height="591" alt="Settings Screenshot" src="https://github.com/user-attachments/assets/8d3d2470-b305-4114-91ed-b8778af66e1e" />
-
-*Configuration panel*
 
 ## Usage
 
@@ -61,10 +55,6 @@ Example queries:
 - "What are my notes about the Johnson project?"
 - "Summarize yesterday's meeting notes"
 - "Find all mentions of machine learning"
-
-<img width="881" height="500" alt="Upload Queue Screenshot" src="https://github.com/user-attachments/assets/a1a51b87-2e8a-461a-8f6b-59ef0dea1098" />
-
-*Indexing progress view*
 
 ### MCP Server (External Tools)
 
@@ -86,6 +76,8 @@ Available endpoints:
 - Only `.md` files are indexed
 - Changes trigger automatic re-indexing
 - Hash-based duplicate prevention
+
+<img width="881" height="500" alt="Upload Queue Screenshot" src="https://github.com/user-attachments/assets/a1a51b87-2e8a-461a-8f6b-59ef0dea1098" />
 
 ### Costs
 Gemini File Search pricing ([details](https://ai.google.dev/gemini-api/docs/file-search#pricing)):
