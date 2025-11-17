@@ -2,6 +2,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { ChunkingConfig, ChatModel } from '../types';
+import { ensureGeminiUploadPatch } from './geminiSdkPatch';
 
 export interface CustomMetadataEntry {
   key: string;
@@ -29,6 +30,9 @@ export class GeminiService {
 
   constructor(apiKey: string) {
     this.ai = new GoogleGenAI({ apiKey });
+    // Patch the SDK to ensure the displayName is included in the upload request
+    // See: https://github.com/googleapis/js-genai/issues/1078
+    ensureGeminiUploadPatch(this.ai);
   }
 
   /**

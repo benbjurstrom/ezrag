@@ -649,22 +649,12 @@ this.app.workspace.onLayoutReady(() => {
    - Takes ~10-15 seconds to fetch all pages
    - Only used by Janitor (manual, not hot path)
 
-5. **SDK displayName bug (TEMPORARY WORKAROUND)**: `@google/genai` SDK has a bug where `displayName` is not attached to upload requests
-   - **Issue**: The `uploadFileToFileSearchStore` method doesn't include `displayName` in the request body before calling `fetchUploadUrl`
-   - **Impact**: Documents uploaded with a `displayName` config will not have that name set in Gemini
-   - **Workaround applied**: Manually patched `node_modules/@google/genai/dist/node/index.mjs` and `index.cjs`
-   - **Files modified**:
-     - `node_modules/@google/genai/dist/node/index.mjs` (line ~11339)
-     - `node_modules/@google/genai/dist/node/index.cjs` (line ~11361)
-   - **Change**: Added displayName check before customMetadata:
-     ```javascript
-     if (config === null || config === void 0 ? void 0 : config.displayName) {
-         body['displayName'] = config.displayName;
-     }
-     ```
-   - **Action required after npm install**: Re-apply this patch if `node_modules` is deleted/reinstalled
-   - **Tracking**: Waiting for Google team to fix this in the official SDK release
-   - **Future**: Remove this workaround once the official fix is published
+5. **SDK displayName bug (runtime patch)**: `@google/genai` still drops `displayName` during uploads
+   - **Issue**: `uploadFileToFileSearchStore` never forwards `displayName` to `fetchUploadUrl`, so Gemini loses the note title (we map Obsidian paths into `displayName`)
+   - **Impact**: Missing titles break citation→document mapping because Gemini search no longer returns the path we stored
+   - **Runtime workaround**: `src/gemini/geminiSdkPatch.ts` monkey-patches the SDK's `ApiClient.uploadFileToFileSearchStore` at construction time (see `ensureGeminiUploadPatch()` called inside `GeminiService`). Every runtime now injects `displayName`, metadata, and chunking config before fetching the upload URL. No more manual edits inside `node_modules` for beta testers.
+   - **Verification**: After upgrading dependencies, run `npm run build` and do a quick upload to confirm `document.displayName` matches the note path.
+   - **Future removal**: Once Google ships an official fix, delete `src/gemini/geminiSdkPatch.ts`, remove the `ensureGeminiUploadPatch()` call in `GeminiService`, and drop this section from AGENTS.md. Until then, do **not** remove the runtime patch or the citations will break.
 
 ### Performance Critical Paths
 
