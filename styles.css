@@ -1,8 +1,633 @@
-/*
+/* ============================================
+   CHAT VIEW - Mobile-First Design
+   Uses Obsidian CSS variables for theming
+   ============================================ */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.ezrag-chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 
-If your plugin does not need CSS, delete this file.
+/* Header */
+.ezrag-chat-header {
+  padding: var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
 
-*/
+.ezrag-chat-title {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  margin-bottom: var(--size-2-1);
+}
+
+.ezrag-chat-status {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ezrag-chat-status.is-disabled {
+  color: var(--text-faint);
+}
+
+/* Action bar */
+.ezrag-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ezrag-chat-model-switcher {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  flex: 1;
+}
+
+.ezrag-chat-model-switcher .dropdown {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
+button.ezrag-chat-send {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+.ezrag-new-chat-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Messages area */
+.ezrag-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--size-4-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-4);
+}
+
+/* Empty state */
+.ezrag-empty-state {
+  margin: auto;
+  text-align: center;
+  max-width: 300px;
+  padding: var(--size-4-6);
+}
+
+.ezrag-empty-icon {
+  margin: 0 auto var(--size-4-3);
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  opacity: 0.5;
+}
+
+.ezrag-empty-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
+.ezrag-empty-state p {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: var(--line-height-tight);
+}
+
+/* Message rows */
+.ezrag-message-row {
+  display: flex;
+  width: 100%;
+}
+
+.ezrag-message-row.is-user {
+  justify-content: flex-end;
+}
+
+.ezrag-message-row.is-assistant {
+  justify-content: flex-start;
+}
+
+/* Message bubbles */
+.ezrag-message-bubble {
+  padding: var(--size-4-3);
+  border-radius: var(--radius-m);
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+.is-user .ezrag-message-bubble {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  max-width: 85%;
+}
+
+.is-assistant .ezrag-message-bubble {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  width: 100%;
+}
+
+/* Message content */
+.ezrag-message-content {
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
+  word-wrap: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+.ezrag-message-content p {
+  margin: 0 0 var(--size-4-2);
+}
+
+.ezrag-message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.ezrag-message-content ul,
+.ezrag-message-content ol {
+  padding-left: var(--size-4-5);
+  margin: var(--size-4-2) 0;
+}
+
+.ezrag-message-content code {
+  background: var(--background-modifier-border);
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  font-size: 0.9em;
+  font-family: var(--font-monospace);
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+/* Citations (inline superscript) */
+.ezrag-citation {
+  color: var(--text-accent);
+  font-size: 0.75em;
+  margin-left: 2px;
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+  transition: opacity 0.1s ease;
+}
+
+.ezrag-citation:hover {
+  opacity: 0.7;
+}
+
+/* References section */
+.ezrag-references {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 0.9em;
+  padding-left: 24px;
+}
+
+.ezrag-references li {
+  margin: 4px 0;
+}
+
+.ezrag-reference-link {
+  color: var(--link-color);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.ezrag-reference-link:hover {
+  text-decoration: underline;
+  color: var(--link-color-hover);
+}
+
+/* Loading indicator */
+.ezrag-loading {
+  display: flex;
+  gap: 6px;
+  padding: var(--size-4-2) 0;
+}
+
+.ezrag-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  animation: ezrag-loading-bounce 1.4s infinite ease-in-out both;
+}
+
+.ezrag-loading-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.ezrag-loading-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes ezrag-loading-bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Input container */
+.ezrag-chat-input-container {
+  padding: var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: flex-end;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.ezrag-chat-input {
+  flex: 1;
+  min-height: 36px;
+  max-height: 120px;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-family: var(--font-interface);
+  resize: none;
+  overflow-y: auto;
+}
+
+.ezrag-chat-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.ezrag-chat-input::placeholder {
+  color: var(--text-faint);
+}
+
+button.ezrag-chat-send {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+.ezrag-chat-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ezrag-chat-send svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Responsive: wider layouts */
+@media (min-width: 600px) {
+  .is-user .ezrag-message-bubble {
+    max-width: 75%;
+  }
+
+  .ezrag-message-row.is-assistant {
+    justify-content: center;
+  }
+
+  .is-assistant .ezrag-message-bubble {
+    width: auto;
+    max-width: 700px;
+  }
+
+  .ezrag-chat-input-container {
+    max-width: 700px;
+  }
+
+  .ezrag-empty-state {
+    max-width: 400px;
+  }
+}
+
+@media (min-width: 900px) {
+  .is-user .ezrag-message-bubble {
+    max-width: 65%;
+  }
+
+  .is-assistant .ezrag-message-bubble {
+    max-width: 800px;
+  }
+
+  .ezrag-chat-input-container {
+    max-width: 800px;
+  }
+}
+
+/* Janitor Modal Styling */
+.janitor-phase {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin-bottom: 1.5rem;
+  color: var(--text-normal);
+}
+
+.janitor-progress-container {
+  margin-bottom: 1.5rem;
+}
+
+.janitor-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--background-modifier-border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.janitor-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--interactive-accent);
+  transition: width 200ms ease;
+  border-radius: 999px;
+}
+
+.janitor-progress-fill.is-indeterminate {
+  position: relative;
+  width: 30%;
+  animation: ezrag-progress-slide 1.2s ease-in-out infinite;
+}
+
+.janitor-progress-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.janitor-current {
+  padding: 0.75rem;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+}
+
+.janitor-summary {
+  padding: 1rem;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  white-space: pre-line;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-normal);
+}
+
+@keyframes ezrag-progress-slide {
+  0% {
+    transform: translateX(-50%);
+  }
+  50% {
+    transform: translateX(50%);
+  }
+  100% {
+    transform: translateX(150%);
+  }
+}
+
+/* Store Table Styling */
+.ezrag-store-table-container {
+  margin-top: var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+.ezrag-store-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-2);
+}
+
+.ezrag-store-table thead {
+  background: var(--background-secondary);
+  border-bottom: 2px solid var(--background-modifier-border);
+}
+
+.ezrag-store-table th {
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: left;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ezrag-store-table tbody tr {
+  border-bottom: 1px solid var(--background-modifier-border);
+  transition: background-color 0.1s ease;
+}
+
+.ezrag-store-table tbody tr:hover {
+  background: var(--background-secondary);
+}
+
+.ezrag-store-table td {
+  padding: var(--size-4-2) var(--size-4-3);
+  color: var(--text-normal);
+}
+
+/* Align numeric columns to the right */
+.ezrag-store-table td:nth-child(2),
+.ezrag-store-table td:nth-child(3),
+.ezrag-store-table td:nth-child(4),
+.ezrag-store-table td:nth-child(5) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ezrag-store-table th:nth-child(2),
+.ezrag-store-table th:nth-child(3),
+.ezrag-store-table th:nth-child(4),
+.ezrag-store-table th:nth-child(5) {
+  text-align: right;
+}
+
+/* Actions column */
+.ezrag-store-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.ezrag-store-actions button.clickable-icon {
+  padding: var(--size-2-1);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: all 0.1s ease;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ezrag-store-actions button.clickable-icon:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ezrag-store-actions button.clickable-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Queue Modal Styling */
+.ezrag-queue-modal {
+  width: 80vw;
+  max-width: 900px;
+}
+
+.ezrag-queue-summary {
+  margin-bottom: var(--size-4-4);
+  padding: var(--size-4-3);
+  background: var(--background-secondary);
+  border-radius: var(--radius-m);
+}
+
+.ezrag-queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--size-4-1);
+}
+
+.ezrag-queue-phase {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ezrag-queue-stats {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ezrag-queue-table-container {
+  margin-top: var(--size-4-3);
+  overflow-x: auto;
+}
+
+.ezrag-queue-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-2);
+}
+
+.ezrag-queue-table thead {
+  background: var(--background-secondary);
+  border-bottom: 2px solid var(--background-modifier-border);
+}
+
+.ezrag-queue-table th {
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: left;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.ezrag-queue-table tbody tr {
+  border-bottom: 1px solid var(--background-modifier-border);
+  transition: background-color 0.1s ease;
+}
+
+.ezrag-queue-table tbody tr:hover {
+  background: var(--background-secondary);
+}
+
+.ezrag-queue-table td {
+  padding: var(--size-4-2) var(--size-4-3);
+  color: var(--text-normal);
+}
+
+/* Document path column - allow text wrap for long paths */
+.ezrag-queue-doc {
+  max-width: 250px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Align numeric/status columns to center or right */
+.ezrag-queue-table td:nth-child(2),
+.ezrag-queue-table td:nth-child(3) {
+  text-align: center;
+}
+
+.ezrag-queue-table th:nth-child(2),
+.ezrag-queue-table th:nth-child(3) {
+  text-align: center;
+}
+
+/* Ready time column with fixed width to prevent bouncing */
+.ezrag-queue-ready {
+  min-width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ezrag-queue-table th:nth-child(4) {
+  text-align: right;
+}
+
+/* Attempts column with fixed width */
+.ezrag-queue-attempts {
+  min-width: 140px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ezrag-queue-table th:nth-child(5) {
+  text-align: right;
+}

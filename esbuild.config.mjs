@@ -31,9 +31,13 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins],
+		...builtins,
+		// Add node: protocol prefixed versions for compatibility
+		...builtins.map(m => `node:${m}`)
+	],
+	platform: 'node', // Set platform to node for server packages
 	format: "cjs",
-	target: "es2018",
+	target: "es2020",
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,

@@ -1,0 +1,14 @@
+# Ignore artifacts:
+build
+coverage
+docs
+main.js
+README.md
+AGENTS.md
+node_modules
+build
+dist
+dist-ssr
+.vscode
+.claude
+esbuild.config.mjs

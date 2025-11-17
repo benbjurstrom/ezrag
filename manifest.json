@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+  "id": "ezrag",
+  "name": "EzRAG",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "Adds semantic search and AI chat for your Obsidian vault using Google Gemini's File Search API. It also provides a built in MCP server so external tools can semantically search your vault.",
+  "author": "Ben Bjurstrom",
+  "authorUrl": "https://benbjurstrom.com",
+  "fundingUrl": "https://benbjurstrom.com",
+  "isDesktopOnly": false
 }
