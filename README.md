@@ -1,190 +1,101 @@
-# EzRAG - Obsidian Plugin
+# EzRAG - AI-Powered Search for Obsidian
 
-**EzRAG** (Easy Retrieval-Augmented Generation) is an Obsidian plugin that indexes your notes using Google Gemini's File Search API, enabling semantic search and AI-powered chat with your vault.
+Index your Obsidian vault with Google Gemini's File Search API for semantic search and AI chat.
 
 ## Features
 
-- **Automatic Indexing**: Keeps your notes synchronized with Gemini's File Search API
-- **Semantic Search**: Query your notes using natural language (coming in Phase 3)
-- **Smart Change Detection**: Only re-indexes notes when content actually changes
-- **Multi-Device Support**: Works across desktop and mobile with designated "runner" machine
-- **Incremental Updates**: Efficient indexing that preserves state across restarts
-- **MCP Server Integration**: External tools can query your vault (coming in Phase 4)
+- **AI Chat Interface** - Ask questions about your notes in natural language
+- **Automatic Indexing** - Keeps notes synced with Gemini as you edit
+- **MCP Server** - External tools (Claude Code, etc.) can query your vault
+- **Multi-Device Safe** - Designate one "runner" machine to prevent conflicts
+- **Smart Sync** - Only re-indexes when content actually changes
 
-## Prerequisites
+## Quick Start
 
-- **Gemini API Key**: Get your free API key from [Google AI Studio](https://ai.google.dev/)
-- **Desktop Required for Indexing**: The runner (indexing machine) must be on desktop (Windows, macOS, or Linux)
-- **Obsidian Desktop/Mobile**: Plugin works on both, but indexing only runs on the designated desktop runner
+1. Get API key from [Google AI Studio](https://ai.google.dev/)
+2. Install plugin: Settings → Community Plugins → Browse → "EzRAG"
+3. Configure: Settings → EzRAG
+   - Add your API key
+   - Enable "This machine is the runner" (desktop only)
+4. Plugin automatically creates a FileSearch store and indexes your vault
 
-## Installation
+**Multi-Device Setup:** Install on all devices, but enable "runner" on **one desktop only**. The API key syncs via your vault; other devices use the index without indexing themselves.
 
-### Manual Installation (Development)
+## Chat Interface
 
-1. Download or clone this repository
-2. Copy the plugin folder to your vault: `VaultFolder/.obsidian/plugins/ezrag/`
-3. Make sure the folder contains `manifest.json`, `main.js`, and `styles.css`
-4. Restart Obsidian
-5. Enable the plugin in Settings → Community Plugins
+Open chat via ribbon icon or command palette and ask questions:
+- "Summarize my meeting notes from last week"
+- "What did I write about machine learning?"
+- "Find all references to the Johnson project"
 
-### From Community Plugins (Coming Soon)
+## MCP Server
 
-Once published, you can install directly from Obsidian's Community Plugins browser.
+Enable external tools to query your vault:
 
-## Setup
+1. Settings → MCP Server → Enable
+2. Connect from Claude Code or other MCP clients:
 
-### First-Time Setup
+```bash
+claude mcp add --transport http ezrag-obsidian-notes http://localhost:42427/mcp
+```
 
-1. **Get a Gemini API Key**
-   - Visit [Google AI Studio](https://ai.google.dev/)
-   - Create a new API key
-   - Copy the key
+**Available Tools:**
+- `keywordSearch` - Search vault by keyword or regex
+- `semanticSearch` - AI-powered semantic search
+- `note:///<path>` - Read note contents by path
 
-2. **Configure the Plugin**
-   - Open Obsidian Settings → EzRAG
-   - Paste your API key
-   - (Desktop only) Enable "This machine is the runner" toggle
-   - The plugin will automatically create a FileSearchStore for your vault
+## Commands
 
-3. **Choose Folders to Index (Optional)**
-   - By default, EzRAG indexes your entire vault
-   - To limit indexing, specify folders in Settings → Included Folders
-   - Example: `Projects, Research, Notes`
+Access via Command Palette (Cmd/Ctrl+P):
 
-### Multi-Device Setup
+- **Rebuild Index** - Force re-index all files (uses smart reconciliation to avoid duplicates)
+- **Clean Up Gemini Index** - Remove orphaned or duplicate documents from Gemini
+- **Open Queue** - Monitor indexing progress and pending uploads
 
-If you use Obsidian on multiple devices (e.g., laptop + desktop):
+**Store Management:** Click "Manage Stores" button in settings to view, switch, or delete FileSearch stores.
 
-1. **Install the plugin on all devices**
-2. **Set the API key on one device** (it will sync via your vault)
-3. **Enable "runner" on ONE device only** (preferably your main desktop)
-4. **Other devices** will use the index but won't perform indexing
+## Settings Overview
 
-**Why only one runner?** To prevent duplicate indexing, API overload, and sync conflicts.
+Configure in Settings → EzRAG:
 
-## Usage
-
-### Automatic Indexing
-
-Once configured, EzRAG automatically:
-- Indexes new notes when created
-- Re-indexes notes when modified
-- Removes notes from the index when deleted
-- Handles file renames gracefully
-
-### Manual Commands
-
-Access these commands via Command Palette (Cmd/Ctrl+P):
-
-- **Rebuild Index**: Clear and re-index all files
-- **Run Deduplication**: Find and remove duplicate documents (useful after sync conflicts)
-- **Cleanup Orphaned Documents**: Remove indexed files that no longer exist in vault
-
-### Monitoring Progress
-
-- **Status Bar**: Shows indexing progress (bottom-right corner)
-- **Settings Tab**: View index statistics (total, ready, pending, errors)
-
-## Settings
-
-### API Configuration
-
-- **Gemini API Key**: Your Google Gemini API key
-- **Included Folders**: Limit indexing to specific folders (comma-separated)
-
-### Runner Configuration (Desktop Only)
-
-- **This machine is the runner**: Enable to make this device responsible for indexing
-- Only ONE device per vault should be the runner
-
-### Performance Tuning
-
-- **Upload Concurrency**: Number of concurrent uploads (1-5, default: 2)
-- **Max Tokens Per Chunk**: Maximum tokens in each chunk (100-1000, default: 400)
-- **Max Overlap Tokens**: Overlapping tokens between chunks (0-200, default: 50)
-
-### Store Management
-
-- **View Stats**: See FileSearchStore statistics
-- **List All Stores**: View all stores for your API key
-- **Delete Store**: Permanently remove the store (cannot be undone!)
+- **Included Folders** - Limit indexing to specific folders (empty = entire vault)
+- **Upload Concurrency** - Number of simultaneous uploads (1-5, default: 2)
+- **Upload Throttle** - Delay before uploading modified notes (batches rapid edits)
+- **Chunking** - Token limits for document chunks (default: 400 tokens, 50 overlap)
 
 ## FAQ
 
-### Which files are indexed?
+**How much does it cost?**
+Google Gemini pricing applies. Check [ai.google.dev/pricing](https://ai.google.dev/pricing)
 
-Only Markdown files (`.md`) in included folders are indexed. Attachments, templates, and non-markdown files are ignored.
+**Can I use this on mobile?**
+Plugin works on mobile but can't be the runner (indexing machine). Chat and search work once a desktop runner has indexed your vault.
 
-### How much does it cost?
+**Which files are indexed?**
+Only Markdown files (`.md`) in included folders.
 
-Google Gemini's File Search API pricing depends on your usage. Check [Google AI Pricing](https://ai.google.dev/pricing) for current rates.
+**How do I fix duplicates?**
+Run "Clean Up Gemini Index" command. Ensure only one device is designated as runner.
 
-### What happens if I rename a file?
+**What is a FileSearchStore?**
+Gemini's container for indexed documents. EzRAG creates one per vault.
 
-EzRAG automatically deletes the old indexed version and creates a new one with the updated path.
+## Privacy
 
-### Can I use this on mobile?
+- Notes are uploaded to Google's Gemini API for indexing
+- Data is stored in your Google account's FileSearch store
+- You can delete your store anytime via Settings → Manage Stores
+- EzRAG collects no usage data or telemetry
 
-Yes, but mobile devices cannot be the "runner" (indexing machine). Mobile devices can use chat and search features once implemented.
+## Development
 
-### How do I fix duplicate documents?
-
-Run the **Run Deduplication** command from Settings or the Command Palette. This finds and removes duplicates created by sync conflicts.
-
-### What is a FileSearchStore?
-
-A FileSearchStore is Gemini's container for indexed documents. EzRAG creates one store per vault, named after your vault.
-
-## Troubleshooting
-
-### Indexing not working
-
-1. Check that "This machine is the runner" is enabled (Settings → Runner Configuration)
-2. Verify your API key is valid (Settings → API Configuration)
-3. Check the console (Cmd/Ctrl+Shift+I) for error messages
-
-### Files not showing in index
-
-1. Ensure files are in included folders (or no folders are specified for "all")
-2. Check that files are Markdown (`.md` extension)
-3. Run "Rebuild Index" command to force re-indexing
-
-### Sync conflicts creating duplicates
-
-1. Run "Run Deduplication" from Settings
-2. Ensure only ONE device is the runner
-3. Wait for sync to complete before switching devices
-
-## Roadmap
-
-- **Phase 1** (Current): Core infrastructure and automatic indexing
-- **Phase 2**: Enhanced progress tracking and reconciliation
-- **Phase 3**: Chat interface for querying notes
-- **Phase 4**: MCP server for external tool integration
-
-## Privacy & Data
-
-- Your notes are uploaded to Google's Gemini API for indexing
-- Indexed content is stored in your Google account's FileSearchStore
-- EzRAG does not collect or transmit any usage data
-- You can delete your FileSearchStore at any time from Settings
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details.
 
 ## Support
 
-- **Issues**: Report bugs on [GitHub Issues](https://github.com/yourusername/ezrag/issues)
-- **Feature Requests**: Submit on GitHub Discussions
-- **Documentation**: See [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details
+- [GitHub Issues](https://github.com/yourusername/ezrag/issues)
+- [GitHub Discussions](https://github.com/yourusername/ezrag/discussions)
 
 ## License
 
 MIT License - See LICENSE file for details
-
-## Credits
-
-Built with:
-- [Obsidian Plugin API](https://github.com/obsidianmd/obsidian-api)
-- [Google Generative AI SDK](https://www.npmjs.com/package/@google/genai)
-- [p-queue](https://www.npmjs.com/package/p-queue) for job queue management
-
-
-
