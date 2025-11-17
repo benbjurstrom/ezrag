@@ -62,7 +62,6 @@ export class ConnectionManager {
    */
   private handleOnline(): void {
     if (!this.state.online) {
-      console.log('[EzRAG] Browser detected online');
       this.state.online = true;
       this.recomputeConnected();
       this.notifyListeners();
@@ -74,7 +73,6 @@ export class ConnectionManager {
    */
   private handleOffline(): void {
     if (this.state.online) {
-      console.log('[EzRAG] Browser detected offline');
       this.state.online = false;
       this.recomputeConnected();
       this.notifyListeners();
@@ -86,7 +84,6 @@ export class ConnectionManager {
    */
   setApiKeyValid(valid: boolean, error?: string): void {
     if (this.state.apiKeyValid !== valid || this.state.apiKeyError !== error) {
-      console.log(`[EzRAG] API key validity changed: ${valid}`);
       this.state.apiKeyValid = valid;
       this.state.apiKeyError = error;
       this.state.lastValidation = Date.now();

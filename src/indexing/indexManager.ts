@@ -99,7 +99,7 @@ export class IndexManager {
       stateManager: this.state,
       onProgress: (update) => {
         if (update.message) {
-          console.log(`[Janitor] ${update.message}`);
+          this.updateProgress(update.message);
         }
       },
     });
@@ -120,6 +120,7 @@ export class IndexManager {
    */
   async reconcileOnStartup(syncWithRemote: boolean = false): Promise<void> {
     const files = this.getIndexableFiles();
+    this.updateProgress('Scanning vault for changes');
 
     const pendingQueueCount = this.state.getQueueEntries().length;
     this.stats.total = pendingQueueCount;
@@ -127,7 +128,6 @@ export class IndexManager {
     this.stats.failed = 0;
     this.stats.pending = pendingQueueCount;
 
-    console.log(`[IndexManager] Reconciling ${files.length} files...`);
     this.updateProgress('Scanning');
     this.queueManager.notifyQueueChanged();
 
@@ -135,7 +135,7 @@ export class IndexManager {
     let remoteDocsByPathHash = new Map<string, any>();
     const shouldSyncRemote = syncWithRemote && this.connectionManager.isConnected();
     if (shouldSyncRemote) {
-      console.log('[IndexManager] Fetching remote documents for smart reconciliation...');
+      this.updateProgress('Fetching remote documents for reconciliation');
       try {
         const settings = this.state.getSettings();
         const remoteDocs = await this.gemini.listDocuments(settings.storeName);
@@ -146,12 +146,12 @@ export class IndexManager {
             remoteDocsByPathHash.set(pathHashMeta.stringValue, doc);
           }
         }
-        console.log(`[IndexManager] Found ${remoteDocsByPathHash.size} remote documents`);
+        this.updateProgress('Reconciling remote documents');
       } catch (err) {
         console.error('[IndexManager] Failed to fetch remote docs, proceeding without sync:', err);
       }
     } else if (syncWithRemote && !this.connectionManager.isConnected()) {
-      console.warn('[IndexManager] Cannot reconcile with remote while offline. Will resync later.');
+      this.updateProgress('Waiting for connection to reconcile remote index');
     }
 
     // Scan all files and queue those that need indexing
@@ -174,7 +174,6 @@ export class IndexManager {
           const remoteHash = remoteHashMeta?.stringValue;
 
           if (remoteHash === contentHash) {
-            console.log(`[IndexManager] Restored state for ${file.path} from remote (hash match)`);
             this.state.setDocState(file.path, {
               vaultPath: file.path,
               geminiDocumentName: remoteDoc.name,
@@ -186,8 +185,6 @@ export class IndexManager {
               tags,
             });
             continue;
-          } else {
-            console.log(`[IndexManager] Content changed for ${file.path}, will re-index`);
           }
         }
 
@@ -203,8 +200,6 @@ export class IndexManager {
         console.error(`Failed to scan ${file.path}:`, err);
       }
     }
-
-    console.log(`[IndexManager] Queue contains ${this.stats.pending} files for indexing`);
 
     this.updateProgress('Indexing');
     this.queueManager.notifyQueueChanged();
@@ -476,7 +471,6 @@ export class IndexManager {
       if (!this.isNotFoundError(err)) {
         throw err;
       }
-      console.log('[IndexManager] Remote document already deleted.');
     }
   }
 
@@ -490,7 +484,6 @@ export class IndexManager {
   }
 
   private handleEmptyFile(vaultPath: string): void {
-    console.log(`[IndexManager] Skipping empty file: ${vaultPath}`);
     const removedEntries = this.state.removeQueueEntriesByPath(vaultPath);
     if (removedEntries > 0) {
       this.stats.pending = Math.max(0, this.stats.pending - removedEntries);

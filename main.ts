@@ -30,8 +30,6 @@ export default class EzRAGPlugin extends Plugin {
   private lifecycleCoordinator: LifecycleCoordinator | null = null;
 
   async onload() {
-    console.log('Loading EzRAG plugin');
-
     // Initialize localStorage manager for index/queue data (device-specific, non-synced)
     this.indexStateStorage = new IndexStateStorageManager(this.app, this.manifest.id);
 
@@ -228,7 +226,6 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   onunload() {
-    console.log('Unloading EzRAG plugin');
 
     // Stop MCP server if running
     if (this.mcpServer) {
@@ -388,7 +385,6 @@ export default class EzRAGPlugin extends Plugin {
       const tempService = new GeminiService(apiKey);
       await tempService.listStores();
       this.connectionManager.setApiKeyValid(true);
-      console.log('[EzRAG] Stored API key validated successfully');
     } catch (err) {
       console.error('[EzRAG] Stored API key validation failed:', err);
       this.connectionManager.setApiKeyValid(false, 'Stored API key appears to be invalid.');
@@ -592,7 +588,7 @@ export default class EzRAGPlugin extends Plugin {
    */
   async startMCPServer(): Promise<void> {
     if (this.mcpServer) {
-      console.log('[EzRAG] MCP server already running');
+      new Notice('MCP server is already running');
       return;
     }
 

@@ -221,7 +221,6 @@ export class MCPServer {
 
   async start(): Promise<void> {
     if (this.isRunning) {
-      console.log('[MCP Server] Already running');
       return;
     }
 
@@ -229,7 +228,6 @@ export class MCPServer {
       try {
         this.httpServer = this.expressApp.listen(this.port, () => {
           this.isRunning = true;
-          console.log(`[MCP Server] Started on http://localhost:${this.port}/mcp`);
           resolve();
         });
 
@@ -253,7 +251,6 @@ export class MCPServer {
     return new Promise((resolve) => {
       if (this.httpServer) {
         this.httpServer.close(() => {
-          console.log('[MCP Server] Stopped');
           this.isRunning = false;
           this.httpServer = null;
           resolve();

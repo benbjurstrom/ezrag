@@ -161,7 +161,8 @@ export class PersistentQueue {
         }
 
         const delayMs = Math.pow(2, attempt) * 1000;
-        console.log(`Retry ${attempt + 1}/${maxRetries} for ${entry.vaultPath} after ${delayMs}ms`);
+        const seconds = Math.round(delayMs / 100) / 10;
+        this.options.onStatus(`Retry ${attempt + 1}/${maxRetries} for ${entry.vaultPath} in ${seconds}s`);
         await this.delay(delayMs);
       }
     }

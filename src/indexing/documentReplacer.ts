@@ -19,12 +19,11 @@ export class DocumentReplacer {
       try {
         await this.gemini.deleteDocument(existingDocumentName);
       } catch (err) {
-        console.log(`[IndexManager] Document already deleted or not found: ${existingDocumentName}`);
+        if (!this.isNotFoundError(err)) {
+          throw err;
+        }
       }
     }
-
-    console.log(`[IndexManager] Uploading document with displayName: ${request.displayName}`);
-    console.log(`[IndexManager] Metadata: ${JSON.stringify(request.metadata, null, 2)}`);
 
     return this.gemini.uploadDocument({
       storeName: request.storeName,
@@ -34,5 +33,11 @@ export class DocumentReplacer {
       chunkingConfig: request.chunkingConfig,
       mimeType: request.mimeType ?? 'text/markdown',
     });
+  }
+
+  private isNotFoundError(err: unknown): boolean {
+    const message = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+    if (!message) return false;
+    return message.includes('404') || message.includes('not found');
   }
 }

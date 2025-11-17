@@ -88,13 +88,6 @@ export class GeminiService {
       };
     }
 
-    // Upload to FileSearchStore
-    console.log(`[GeminiService] Upload config:`, {
-      displayName: config.displayName,
-      mimeType: config.mimeType,
-      metadataKeys: config.customMetadata?.map((m: any) => m.key) || []
-    });
-
     let operation = await this.ai.fileSearchStores.uploadToFileSearchStore({
       fileSearchStoreName: storeName,
       file,

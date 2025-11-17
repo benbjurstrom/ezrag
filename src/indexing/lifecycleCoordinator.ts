@@ -136,12 +136,10 @@ export class LifecycleCoordinator {
     const isPaused = controller.isPaused();
 
     if (justLost && isActive && !isPaused) {
-      console.log('[EzRAG] Connection lost, pausing indexing');
       controller.pause();
       this.pausedByDisconnect = true;
       new Notice('EzRAG: Disconnected. Indexing paused.');
     } else if (justRestored) {
-      console.log('[EzRAG] Connection restored');
       if (this.pausedByDisconnect && isPaused) {
         controller.resume();
         this.pausedByDisconnect = false;
