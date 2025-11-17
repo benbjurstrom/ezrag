@@ -54,7 +54,7 @@ export class MCPServer {
       'keywordSearch',
       {
         title: 'Keyword Search',
-        description: 'Search vault notes for keyword matches. Returns file paths and matching lines with context.',
+        description: `Search "${this.app.vault.getName()}" Obsidian vault for keyword matches. Returns file paths and matching lines with context.`,
         inputSchema: {
           query: z.string().describe('Search query (can be a regex pattern)'),
           caseSensitive: z.boolean().optional().default(false).describe('Whether to perform case-sensitive search'),
@@ -97,7 +97,7 @@ export class MCPServer {
       'semanticSearch',
       {
         title: 'Semantic Search',
-        description: 'Perform semantic search on indexed notes using Gemini FileSearch. Returns AI-generated answer with relevant sources.',
+        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with relevant sources from indexed notes.`,
         inputSchema: {
           query: z.string().describe('Natural language search query'),
           model: z.enum(['gemini-2.5-flash', 'gemini-2.5-pro']).optional().default('gemini-2.5-flash').describe('Gemini model to use'),

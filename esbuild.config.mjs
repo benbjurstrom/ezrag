@@ -35,6 +35,7 @@ const context = await esbuild.context({
 		// Add node: protocol prefixed versions for compatibility
 		...builtins.map(m => `node:${m}`)
 	],
+	platform: 'node', // Set platform to node for server packages
 	format: "cjs",
 	target: "es2020",
 	logLevel: "info",
