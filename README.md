@@ -20,8 +20,31 @@ EzRAG indexes your Markdown notes with Google Gemini, enabling:
 - Obsidian desktop app (mobile supported as read-only)
 
 ### Installation
-1. **Install Plugin**  
-   Settings → Community Plugins → Browse → Search "EzRAG" → Install
+
+Since EzRAG is is still in development and hasn't been submitted to the Obsidian community repository, install manually using one of these methods:
+
+#### Option 1: BRAT (Recommended)
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins
+2. Open BRAT settings → Add Beta Plugin
+3. Enter: `https://github.com/yourusername/ezrag`
+4. Enable EzRAG in Community Plugins
+
+#### Option 2: Manual Installation
+1. Clone the repository:
+```bash
+   cd /path/to/vault/.obsidian/plugins
+   git clone https://github.com/yourusername/ezrag
+```
+2. Build the plugin:
+```bash
+   cd ezrag
+   npm install
+   npm run build
+```
+3. Restart Obsidian
+4. Enable EzRAG in Settings → Community Plugins
+
+### Configuration
 
 2. **Add API Key**  
    Settings → EzRAG → Enter your Gemini API key

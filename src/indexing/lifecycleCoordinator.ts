@@ -1,11 +1,11 @@
 import { App, Notice, Platform } from 'obsidian';
 import { ConnectionManager, ConnectionState } from '../connection/connectionManager';
-import { RunnerStateManager } from '../runner/runnerState';
+import { RunnerStateManager } from '../state/runnerState';
 import { StateManager } from '../state/state';
 import { GeminiService } from '../gemini/geminiService';
-import { IndexingController } from '../indexing/indexingController';
+import { IndexingController } from './indexingController';
 
-export interface IndexingLifecycleOptions {
+export interface LifecycleCoordinatorOptions {
   app: App;
   stateManager: StateManager;
   runnerManager: RunnerStateManager | null;
@@ -16,12 +16,12 @@ export interface IndexingLifecycleOptions {
   onStatusChange: () => void;
 }
 
-export class IndexingLifecycleCoordinator {
+export class LifecycleCoordinator {
   private lastConnectionState: ConnectionState;
   private lastApiKeyError?: string;
   private pausedByDisconnect = false;
 
-  constructor(private options: IndexingLifecycleOptions) {
+  constructor(private options: LifecycleCoordinatorOptions) {
     this.lastConnectionState = options.connectionManager.getState();
     this.lastApiKeyError = this.lastConnectionState.apiKeyError;
   }

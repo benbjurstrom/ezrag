@@ -5,15 +5,15 @@ import { StateManager } from './src/state/state';
 import { DEFAULT_DATA } from './src/types';
 import { GeminiService } from './src/gemini/geminiService';
 import { IndexingController, IndexingPhase } from './src/indexing/indexingController';
-import { RunnerStateManager } from './src/runner/runnerState';
-import { IndexStateStorageManager } from './src/storage/indexStateStorageManager';
+import { RunnerStateManager } from './src/state/runnerState';
+import { IndexStateStorageManager } from './src/state/indexState';
 import { JanitorProgressModal } from './src/ui/janitorProgressModal';
 import { EzRAGSettingTab } from './src/ui/settingsTab';
 import { IndexingStatusModal } from './src/ui/indexingStatusModal';
-import { StoreManager } from './src/store/storeManager';
+import { StoreManager } from './src/gemini/storeManager';
 import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
 import { ConnectionManager, ConnectionState } from './src/connection/connectionManager';
-import { IndexingLifecycleCoordinator } from './src/lifecycle/indexingLifecycleCoordinator';
+import { LifecycleCoordinator } from './src/indexing/lifecycleCoordinator';
 import { MCPServer } from './src/mcp/server';
 
 export default class EzRAGPlugin extends Plugin {
@@ -27,7 +27,7 @@ export default class EzRAGPlugin extends Plugin {
   statusBarItem: HTMLElement | null = null;
   mcpServer: MCPServer | null = null;
   private unsubscribeConnection?: () => void;
-  private lifecycleCoordinator: IndexingLifecycleCoordinator | null = null;
+  private lifecycleCoordinator: LifecycleCoordinator | null = null;
 
   async onload() {
     console.log('Loading EzRAG plugin');
@@ -98,7 +98,7 @@ export default class EzRAGPlugin extends Plugin {
       connectionManager: this.connectionManager,
     });
 
-    this.lifecycleCoordinator = new IndexingLifecycleCoordinator({
+    this.lifecycleCoordinator = new LifecycleCoordinator({
       app: this.app,
       stateManager: this.stateManager,
       runnerManager: this.runnerManager,
