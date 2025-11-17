@@ -1,6 +1,6 @@
 // src/ui/chatView.ts - Mobile-first chat interface using Obsidian design system
 
-import { App, ItemView, Notice, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, Notice, WorkspaceLeaf, setIcon, MarkdownRenderer } from 'obsidian';
 import type EzRAGPlugin from '../../main';
 import { ChatMessage, ChatModel } from '../types';
 import { annotateForChat } from '../utils/citations';
@@ -231,16 +231,9 @@ export class ChatView extends ItemView {
         message.groundingChunks || []
       );
 
-      // Render markdown first (placeholders pass through)
-      let html = this.renderMarkdown(annotatedText);
-
-      // Replace placeholders with actual citation HTML
-      html = html.replace(/\{\{CITATION:([^:]+):([^}]+)\}\}/g, (match, nums, files) => {
-        const fileArray = files.split('|');
-        return `<sup class="ezrag-citation" data-files="${files}" title="Click to open: ${fileArray.join(', ')}">[${nums}]</sup>`;
+      this.renderMarkdownInto(content, annotatedText, () => {
+        this.replaceCitationPlaceholders(content);
       });
-
-      content.innerHTML = html;
 
       // Add click handler for citations (event delegation)
       content.addEventListener('click', (e) => {
@@ -265,80 +258,68 @@ export class ChatView extends ItemView {
         this.renderReferences(bubble, fileReferences);
       }
     } else {
-      content.innerHTML = this.renderMarkdown(message.text);
+      this.renderMarkdownInto(content, message.text);
     }
 
     return row;
   }
 
-  private renderMarkdown(text: string): string {
-    if (!text) return '';
-    const escaped = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+  private renderMarkdownInto(target: HTMLElement, markdown: string, afterRender?: () => void): void {
+    target.empty();
+    const sourcePath = this.app.workspace.getActiveFile()?.path ?? 'ezrag-chat.md';
+    const promise = MarkdownRenderer.renderMarkdown(markdown || '', target, sourcePath, this);
+    promise
+      .then(() => afterRender?.())
+      .catch((err) => {
+        console.error('[EzRAG] Failed to render chat markdown', err);
+        target.setText(markdown);
+      });
+  }
 
-    const lines = escaped.split('\n');
-    let html = '';
-    let listType: 'ul' | 'ol' | null = null;
-    let paragraph = '';
-
-    const flushParagraph = () => {
-      if (paragraph) {
-        html += `<p>${paragraph}</p>`;
-        paragraph = '';
+  private replaceCitationPlaceholders(container: HTMLElement): void {
+    const regex = /\{\{CITATION:([^:]+):([^}]+)\}\}/g;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+      if (regex.test(currentNode.nodeValue ?? '')) {
+        nodes.push(currentNode as Text);
       }
-    };
-
-    const flushList = () => {
-      if (listType) {
-        html += `</${listType}>`;
-        listType = null;
-      }
-    };
-
-    for (const raw of lines) {
-      const line = raw
-        .replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>')
-        .replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
-
-      const ordered = line.match(/^\s*\d+\.\s(.*)/);
-      const unordered = line.match(/^\s*[*-]\s(.*)/);
-
-      if (ordered) {
-        flushParagraph();
-        if (listType !== 'ol') {
-          flushList();
-          html += '<ol>';
-          listType = 'ol';
-        }
-        html += `<li>${ordered[1]}</li>`;
-        continue;
-      }
-
-      if (unordered) {
-        flushParagraph();
-        if (listType !== 'ul') {
-          flushList();
-          html += '<ul>';
-          listType = 'ul';
-        }
-        html += `<li>${unordered[1]}</li>`;
-        continue;
-      }
-
-      flushList();
-      if (line.trim().length === 0) {
-        flushParagraph();
-      } else {
-        paragraph += `${paragraph ? '<br/>' : ''}${line}`;
-      }
+      regex.lastIndex = 0;
+      currentNode = walker.nextNode();
     }
 
-    flushParagraph();
-    flushList();
-    return html;
+    for (const textNode of nodes) {
+      const text = textNode.nodeValue ?? '';
+      const fragment = document.createDocumentFragment();
+      let lastIndex = 0;
+      regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        fragment.appendChild(this.createCitationElement(match[1], match[2]));
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+
+      textNode.replaceWith(fragment);
+    }
+  }
+
+  private createCitationElement(nums: string, files: string): HTMLElement {
+    const sup = document.createElement('sup');
+    sup.addClass('ezrag-citation');
+    sup.setAttribute('data-files', files);
+    const fileArray = files.split('|');
+    sup.setAttribute('title', `Click to open: ${fileArray.join(', ')}`);
+    sup.setText(`[${nums}]`);
+    return sup;
   }
 
   private handleSubmit(): void {
