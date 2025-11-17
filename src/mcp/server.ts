@@ -97,17 +97,13 @@ export class MCPServer {
       'semanticSearch',
       {
         title: 'Semantic Search',
-        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with relevant sources and grounding information.`,
+        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with inline citations and references in markdown format.`,
         inputSchema: {
           query: z.string().describe('Natural language search query'),
           model: z.enum(['gemini-2.5-flash', 'gemini-2.5-pro']).optional().default('gemini-2.5-flash').describe('Gemini model to use')
         },
         outputSchema: {
-          answer: z.string(),
-          sources: z.array(z.object({
-            text: z.string(),
-            files: z.array(z.string())
-          }))
+          answer: z.string()
         }
       },
       async ({ query, model }) => {
@@ -122,14 +118,13 @@ export class MCPServer {
         }
 
         try {
-          const results = await semanticSearch(geminiService, storeName, {
+          const markdown = await semanticSearch(geminiService, storeName, {
             query,
             model
           });
 
           return {
-            content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
-            structuredContent: results as unknown as Record<string, unknown>
+            content: [{ type: 'text', text: markdown }]
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);

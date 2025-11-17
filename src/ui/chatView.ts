@@ -3,6 +3,7 @@
 import { App, ItemView, Notice, WorkspaceLeaf, setIcon } from 'obsidian';
 import type EzRAGPlugin from '../../main';
 import { ChatMessage, ChatModel } from '../types';
+import { annotateForChat } from '../utils/citations';
 
 export const CHAT_VIEW_TYPE = 'ezrag-chat-view';
 
@@ -224,7 +225,7 @@ export class ChatView extends ItemView {
 
     // For model messages with grounding, annotate with citations
     if (message.role === 'model' && message.groundingSupports && message.groundingSupports.length > 0) {
-      const { annotatedText, fileReferences } = this.annotateWithCitations(
+      const { annotatedText, fileReferences } = annotateForChat(
         message.text,
         message.groundingSupports,
         message.groundingChunks || []
@@ -394,94 +395,6 @@ export class ChatView extends ItemView {
       this.updateHeader();
       this.renderMessages();
     }
-  }
-
-  /**
-   * Annotate answer text with inline citations based on grounding supports
-   * Returns annotated text and file reference map
-   */
-  private annotateWithCitations(
-    answerText: string,
-    groundingSupports: any[],
-    groundingChunks: any[]
-  ): { annotatedText: string; fileReferences: Map<string, number> } {
-    const fileReferences = new Map<string, number>();
-
-    if (!groundingSupports || groundingSupports.length === 0) {
-      return { annotatedText: answerText, fileReferences };
-    }
-
-    // Step 1: Build file reference map (file path → citation number)
-    let refNumber = 1;
-    for (const support of groundingSupports) {
-      const indices = support.groundingChunkIndices || [];
-      for (const index of indices) {
-        if (index >= 0 && index < groundingChunks.length) {
-          const title = groundingChunks[index]?.retrievedContext?.title;
-          if (title && !fileReferences.has(title)) {
-            fileReferences.set(title, refNumber++);
-          }
-        }
-      }
-    }
-
-    // Step 2: Group citations by position (endIndex)
-    const positionMap = new Map<number, Set<number>>();
-
-    for (const support of groundingSupports) {
-      const endIndex = support.segment?.endIndex;
-      if (endIndex === undefined) continue;
-
-      const indices = support.groundingChunkIndices || [];
-      for (const index of indices) {
-        if (index >= 0 && index < groundingChunks.length) {
-          const title = groundingChunks[index]?.retrievedContext?.title;
-          if (title) {
-            const refNum = fileReferences.get(title);
-            if (refNum) {
-              if (!positionMap.has(endIndex)) {
-                positionMap.set(endIndex, new Set());
-              }
-              positionMap.get(endIndex)!.add(refNum);
-            }
-          }
-        }
-      }
-    }
-
-    // Step 3: Prepare insertions with citation placeholders
-    const insertions: Array<{ position: number; text: string }> = [];
-
-    positionMap.forEach((refNums, position) => {
-      const sortedNums = Array.from(refNums).sort((a, b) => a - b);
-
-      // Get file names for tooltip
-      const fileNames = sortedNums
-        .map(num => {
-          for (const [path, refNum] of fileReferences.entries()) {
-            if (refNum === num) return path;
-          }
-          return '';
-        })
-        .filter(Boolean);
-
-      // Use placeholder that won't be escaped by renderMarkdown
-      const citationPlaceholder = `{{CITATION:${sortedNums.join(',')}:${fileNames.join('|')}}}`;
-      insertions.push({ position, text: citationPlaceholder });
-    });
-
-    // Step 4: Insert citations in reverse order (to preserve indices)
-    insertions.sort((a, b) => b.position - a.position);
-
-    let annotatedText = answerText;
-    for (const insertion of insertions) {
-      annotatedText =
-        annotatedText.slice(0, insertion.position) +
-        insertion.text +
-        annotatedText.slice(insertion.position);
-    }
-
-    return { annotatedText, fileReferences };
   }
 
   /**
