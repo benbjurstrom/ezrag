@@ -97,7 +97,6 @@ export class IndexManager {
     this.janitor = new Janitor({
       geminiService: this.gemini,
       stateManager: this.state,
-      storeName: settings.storeName,
       onProgress: (update) => {
         if (update.message) {
           console.log(`[Janitor] ${update.message}`);

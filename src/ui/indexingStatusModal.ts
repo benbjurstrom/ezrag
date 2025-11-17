@@ -109,7 +109,7 @@ export class IndexingStatusModal extends Modal {
     const table = this.queueContainer.createEl('table', { cls: 'ezrag-queue-table' });
     const thead = table.createEl('thead');
     const headerRow = thead.createEl('tr');
-    ['Document', 'Operation', 'Status', 'Will Upload In', 'Attempts'].forEach((label) => {
+    ['Document', 'Status', 'Attempts'].forEach((label) => {
       headerRow.createEl('th', { text: label });
     });
 
@@ -128,16 +128,10 @@ export class IndexingStatusModal extends Modal {
       // Document name (static)
       row.createEl('td', { text: entry.vaultPath, cls: 'ezrag-queue-doc' });
 
-      // Operation (static)
-      row.createEl('td', { text: entry.operation === 'upload' ? 'Upload' : 'Delete' });
-
-      // Status (static)
-      row.createEl('td', { text: this.getEntryStatus(entry) });
-
-      // Will Upload In (dynamic - updated by timer)
+      // Consolidated Status (dynamic - updated by timer)
       row.createEl('td', {
-        text: this.getReadyText(entry),
-        cls: 'ezrag-queue-ready',
+        text: this.getConsolidatedStatus(entry),
+        cls: 'ezrag-queue-status',
         attr: { 'data-ready-at': String(entry.readyAt ?? entry.enqueuedAt ?? 0) }
       });
 
@@ -164,10 +158,10 @@ export class IndexingStatusModal extends Modal {
       const row = this.tableRows.get(key);
       if (!row) continue;
 
-      // Update "Ready In" cell
-      const readyCell = row.querySelector('.ezrag-queue-ready') as HTMLElement;
-      if (readyCell) {
-        readyCell.setText(this.getReadyText(entry));
+      // Update consolidated status cell
+      const statusCell = row.querySelector('.ezrag-queue-status') as HTMLElement;
+      if (statusCell) {
+        statusCell.setText(this.getConsolidatedStatus(entry));
       }
 
       // Update "Attempts" cell if last attempt time changed
@@ -195,27 +189,37 @@ export class IndexingStatusModal extends Modal {
     }
   }
 
-  private getEntryStatus(entry: IndexQueueEntry): string {
-    const docState = this.plugin.stateManager.getDocState(entry.vaultPath);
-    if (entry.operation === 'delete') {
-      return 'Pending delete';
-    }
-    if (docState?.status === 'error') {
-      return 'Error';
-    }
-    if (docState?.status === 'ready') {
-      return 'Ready';
-    }
-    return 'Pending';
-  }
-
-  private getReadyText(entry: IndexQueueEntry): string {
+  private getConsolidatedStatus(entry: IndexQueueEntry): string {
     const now = Date.now();
     const readyAt = entry.readyAt ?? entry.enqueuedAt ?? now;
-    if (readyAt > now) {
-      return `in ${this.formatDuration(readyAt - now)}`;
+    const docState = this.plugin.stateManager.getDocState(entry.vaultPath);
+
+    // Check for error state
+    if (docState?.status === 'error') {
+      const errorMsg = docState.errorMessage || 'Unknown error';
+      // Truncate long error messages
+      return errorMsg.length > 50 ? `Error: ${errorMsg.substring(0, 47)}...` : `Error: ${errorMsg}`;
     }
-    return this.plugin.isConnected() ? 'Ready' : 'Waiting for connection';
+
+    // Check if waiting for connection
+    if (readyAt <= now && !this.plugin.isConnected()) {
+      return 'Waiting for connection';
+    }
+
+    // Handle delete operations
+    if (entry.operation === 'delete') {
+      if (readyAt > now) {
+        return `Deleting in ${this.formatDuration(readyAt - now)}`;
+      }
+      return 'Deleting';
+    }
+
+    // Handle upload operations
+    if (readyAt > now) {
+      return `Uploading in ${this.formatDuration(readyAt - now)}`;
+    }
+
+    return 'Queued';
   }
 
   private getAttemptsText(entry: IndexQueueEntry): string {

@@ -11,7 +11,6 @@ export interface JanitorStats {
 export interface JanitorOptions {
   geminiService: GeminiService;
   stateManager: StateManager;
-  storeName: string;
   onProgress?: (update: JanitorProgressUpdate) => void;
 }
 
@@ -32,13 +31,11 @@ export interface JanitorProgressUpdate {
 export class Janitor {
   private gemini: GeminiService;
   private state: StateManager;
-  private storeName: string;
   private onProgress?: (update: JanitorProgressUpdate) => void;
 
   constructor(options: JanitorOptions) {
     this.gemini = options.geminiService;
     this.state = options.stateManager;
-    this.storeName = options.storeName;
     this.onProgress = options.onProgress;
   }
 
@@ -53,7 +50,8 @@ export class Janitor {
    */
   async findExistingDocument(pathHash: string): Promise<string | null> {
     try {
-      const docs = await this.gemini.listDocuments(this.storeName);
+      const storeName = this.state.getSettings().storeName;
+      const docs = await this.gemini.listDocuments(storeName);
 
       // Find document with matching obsidian_path_hash
       for (const doc of docs) {
@@ -88,9 +86,10 @@ export class Janitor {
       current: 0,
     }, onProgress);
 
+    const storeName = this.state.getSettings().storeName;
     let documentCount: number | undefined;
     try {
-      const store = await this.gemini.getStore(this.storeName);
+      const store = await this.gemini.getStore(storeName);
       documentCount = (store?.documentCount ?? store?.stats?.documentCount) as number | undefined;
     } catch (err) {
       console.warn('[Janitor] Unable to determine document count', err);
@@ -99,7 +98,7 @@ export class Janitor {
 
     // Fetch all documents from Gemini with page progress
     let fetchedPages = 0;
-    const allDocs = await this.gemini.listDocuments(this.storeName, {
+    const allDocs = await this.gemini.listDocuments(storeName, {
       onPage: ({ pageIndex, docs }) => {
         fetchedPages = pageIndex + 1;
         const message = expectedPages
