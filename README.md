@@ -1,90 +1,96 @@
 # EzRAG - AI-Powered Search for Obsidian
 
-Index your Obsidian vault with Google Gemini's File Search API for semantic search and AI chat.
+Semantic search and AI chat for your Obsidian vault using Google [Gemini's File Search API](https://blog.google/technology/developers/file-search-gemini-api/).
 
-## Features
+![Chat Interface Screenshot](screenshots/chat-interface.png)
+*AI chat with your notes*
 
-- **AI Chat Interface** - Ask questions about your notes in natural language
-- **Automatic Indexing** - Keeps notes synced with Gemini as you edit
-- **MCP Server** - External tools (Claude Code, etc.) can query your vault
-- **Multi-Device Safe** - Designate one "runner" machine to prevent conflicts
-- **Smart Sync** - Only re-indexes when content actually changes
+## What It Does
 
-## Quick Start
+EzRAG indexes your Markdown notes with Google Gemini, enabling:
+- Natural language questions about your vault content
+- Semantic search across all notes
+- External tool access via MCP server
+- Automatic sync as you edit
 
-1. Get an API key from [Google AI Studio](https://aistudio.google.com/) (same credentials work across [ai.google.dev](https://ai.google.dev/))
-2. Install plugin: Settings → Community Plugins → Browse → "EzRAG"
-3. Configure: Settings → EzRAG
-   - Add your API key
-   - Enable "This machine is the runner" (desktop only)
-4. Plugin automatically creates a FileSearch store and indexes your vault
+## Setup
 
-**Multi-Device Setup:** Install on all devices, but enable "runner" on **one desktop only**. The API key syncs via your vault; other devices use the index without indexing themselves.
+### Requirements
+- Google Gemini API key ([Get one free](https://aistudio.google.com/))
+- Obsidian desktop app (mobile supported as read-only)
 
-## Chat Interface
+### Installation
+1. **Install Plugin**  
+   Settings → Community Plugins → Browse → Search "EzRAG" → Install
 
-Open chat via ribbon icon or command palette and ask questions:
-- "Summarize my meeting notes from last week"
-- "What did I write about machine learning?"
-- "Find all references to the Johnson project"
+2. **Add API Key**  
+   Settings → EzRAG → Enter your Gemini API key
 
-## MCP Server
+3. **Enable Indexing** (Desktop only)  
+   Settings → EzRAG → Toggle "This machine is the runner"
 
-Enable external tools to query your vault:
+The plugin automatically creates a FileSearch store and begins indexing.
 
-1. Settings → MCP Server → Enable
-2. Connect from Claude Code or other MCP clients:
+![Settings Screenshot](screenshots/settings.png)
+*Configuration panel*
 
+### Multi-Device Setup
+- Install on all devices
+- Enable "runner" on ONE desktop only
+- Other devices can search without indexing
+
+## Usage
+
+### Chat Interface
+Access via ribbon icon or command palette (`EzRAG: Open Chat`)
+
+Example queries:
+- "What are my notes about the Johnson project?"
+- "Summarize yesterday's meeting notes"
+- "Find all mentions of machine learning"
+
+![Upload Queue Screenshot](screenshots/upload-queue.png)
+*Indexing progress view*
+
+### MCP Server (External Tools)
+
+Enable external access in Settings → MCP Server
+
+Connect from Claude Code:
 ```bash
 claude mcp add --transport http ezrag-obsidian-notes http://localhost:42427/mcp
 ```
 
-**Available Tools:**
-- `keywordSearch` - Search vault by keyword or regex
-- `semanticSearch` - AI-powered semantic search
-- `note:///<path>` - Read note contents by path
+Available endpoints:
+- `keywordSearch` - Keyword/regex search
+- `semanticSearch` - AI-powered search
+- `note:///<path>` - Direct note access
 
-## FAQ
+## Technical Details
 
-**Where do I get an API key?**  
-Sign in at [Google AI Studio](https://aistudio.google.com/), create a project, and copy the Gemini API key. The same credential works with the REST/SDK endpoints documented on [ai.google.dev](https://ai.google.dev/).
+### Indexing
+- Only `.md` files are indexed
+- Changes trigger automatic re-indexing
+- Hash-based duplicate prevention
 
-**How much does it cost?**  
-File Search follows Gemini pricing ([overview](https://ai.google.dev/pricing); [latest File Search details](https://ai.google.dev/gemini-api/docs/file-search#pricing)):
-- Indexing charges are billed at the [embedding rate](https://ai.google.dev/gemini-api/docs/pricing#gemini-embedding) – currently **$0.15 per 1M tokens** processed when EzRAG uploads or updates a note.
-- Storage of FileSearch stores is free.
-- Query-time embeddings are free; retrieved chunks simply count toward your model’s regular context-token usage.
+### Costs
+Gemini File Search pricing ([details](https://ai.google.dev/gemini-api/docs/file-search#pricing)):
+- **Indexing**: $0.15 per 1M tokens
+- **Storage**: Free
+- **Queries**: Standard model rates
 
-**What are the File Search limits?**  
-From the [Gemini File Search docs](docs/gemini-docs/file-search.md):
-- Maximum file size per document: **100 MB**.
-- Total FileSearch storage per Google tier: **1 GB (Free)**, **10 GB (Tier 1)**, **100 GB (Tier 2)**, **1 TB (Tier 3)**. Google recommends keeping each store under 20 GB for faster retrievals.
-- Backend storage is roughly 3× your source data because embeddings are stored alongside the original text.
+### Limits
+- Max file size: 100 MB
+- Storage tiers: 1 GB (Free) to 1 TB (Tier 3)
+- Recommended store size: <20 GB for optimal performance
 
-**Can I use this on mobile?**  
-Plugin works on mobile but can't be the runner (indexing machine). Chat and search work once a desktop runner has indexed your vault.
+### Data Management
+- Notes stored in your Google account's FileSearch store
+- Delete anytime via Settings → Manage Stores
+- No telemetry collected
 
-**Which files are indexed?**  
-Only Markdown files (`.md`) in included folders.
+## Links
 
-**How do I fix duplicates?**  
-Run "Clean Up Gemini Index" (Janitor) in settings. Also verify that only one desktop is designated as the runner.
-
-**What is a FileSearchStore?**  
-It’s the Gemini container that stores your note embeddings so the model can retrieve relevant chunks. Google’s developer blog has a great overview: [“Introducing File Search for Gemini API”](https://blog.google/technology/developers/file-search-gemini-api/). EzRAG automatically creates one store per vault and manages it via the Manage Stores modal.
-
-## Privacy
-
-- Notes are uploaded to Google's Gemini API for indexing
-- Data is stored in your Google account's FileSearch store
-- You can delete your store anytime via Settings → Manage Stores
-- EzRAG collects no usage data or telemetry
-
-## Support
-
-- [GitHub Issues](https://github.com/yourusername/ezrag/issues)
-- [GitHub Discussions](https://github.com/yourusername/ezrag/discussions)
-
-## License
-
-MIT License - See LICENSE file for details
+- [Issues](https://github.com/yourusername/ezrag/issues)
+- [Discussions](https://github.com/yourusername/ezrag/discussions)
+- [License](LICENSE) (MIT)
