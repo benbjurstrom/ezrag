@@ -3,9 +3,9 @@
   "name": "EzRAG",
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
-  "description": "Turns your vault into a Gemini-powered RAG index with semantic search, in-app chat, and an MCP endpoint so any AI tool can query your notes.",
+  "description": "Adds semantic search and AI chat for your Obsidian vault using Google Gemini's File Search API. It also provides a built in MCP server so external tools can semantically search your vault.",
   "author": "Ben Bjurstrom",
   "authorUrl": "https://benbjurstrom.com",
-  "fundingUrl": "https://obsidian.md/pricing",
+  "fundingUrl": "https://benbjurstrom.com",
   "isDesktopOnly": false
 }
