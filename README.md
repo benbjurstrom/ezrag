@@ -95,4 +95,4 @@ Gemini File Search pricing ([details](https://ai.google.dev/gemini-api/docs/file
 
 - [Issues](https://github.com/benbjurstrom/ezrag/issues)
 - [Discussions](https://github.com/benbjurstrom/ezrag/discussions)
-- [License](LICENSE) (MIT)
+- [License](LICENSE) (ISC)
