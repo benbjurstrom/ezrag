@@ -131,6 +131,10 @@ button.ezrag-chat-send {
 .ezrag-message-bubble {
   padding: var(--size-4-3);
   border-radius: var(--radius-m);
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
 }
 
 .is-user .ezrag-message-bubble {
@@ -150,6 +154,10 @@ button.ezrag-chat-send {
   font-size: var(--font-ui-small);
   line-height: var(--line-height-normal);
   word-wrap: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
 }
 
 .ezrag-message-content p {
@@ -172,6 +180,10 @@ button.ezrag-chat-send {
   border-radius: var(--radius-s);
   font-size: 0.9em;
   font-family: var(--font-monospace);
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
 }
 
 /* Sources */

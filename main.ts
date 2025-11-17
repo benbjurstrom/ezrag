@@ -138,8 +138,8 @@ export default class EzRAGPlugin extends Plugin {
         this.openIndexingStatusModal();
       } else {
         // Not runner or mobile - open settings
-        this.app.setting.open();
-        this.app.setting.openTabById(this.manifest.id);
+        (this.app as any).setting.open();
+        (this.app as any).setting.openTabById(this.manifest.id);
       }
     });
     this.updateStatusBar(this.getStatusBarText());

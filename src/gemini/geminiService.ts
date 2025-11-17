@@ -21,6 +21,7 @@ export interface UploadDocumentParams {
 export interface FileSearchResult {
   text: string;
   groundingChunks: any[];
+  groundingSupports: any[];
 }
 
 export class GeminiService {
@@ -207,11 +208,14 @@ export class GeminiService {
       }
     });
 
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const groundingMetadata = response.candidates?.[0]?.groundingMetadata || {};
+    const groundingChunks = groundingMetadata.groundingChunks || [];
+    const groundingSupports = groundingMetadata.groundingSupports || [];
 
     return {
       text: response.text || '',
-      groundingChunks
+      groundingChunks,
+      groundingSupports
     };
   }
 

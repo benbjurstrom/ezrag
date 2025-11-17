@@ -274,8 +274,7 @@ export class ChatView extends ItemView {
   }
 
   private updateHeader(): void {
-    const settings = this.plugin.stateManager.getSettings();
-    const vaultName = settings.storeDisplayName || this.app.vault.getName();
+    const vaultName = this.app.vault.getName();
 
     this.headerEl.querySelector('.ezrag-chat-title')?.setText(`Chat with ${vaultName}`);
 

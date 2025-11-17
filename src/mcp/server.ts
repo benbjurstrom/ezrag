@@ -97,23 +97,20 @@ export class MCPServer {
       'semanticSearch',
       {
         title: 'Semantic Search',
-        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with relevant sources from indexed notes.`,
+        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with relevant sources and grounding information.`,
         inputSchema: {
           query: z.string().describe('Natural language search query'),
-          model: z.enum(['gemini-2.5-flash', 'gemini-2.5-pro']).optional().default('gemini-2.5-flash').describe('Gemini model to use'),
-          limit: z.number().optional().default(10).describe('Maximum number of sources to return')
+          model: z.enum(['gemini-2.5-flash', 'gemini-2.5-pro']).optional().default('gemini-2.5-flash').describe('Gemini model to use')
         },
         outputSchema: {
           answer: z.string(),
           sources: z.array(z.object({
-            path: z.string().optional(),
-            excerpt: z.string(),
-            title: z.string().optional(),
-            documentName: z.string().optional()
+            text: z.string(),
+            files: z.array(z.string())
           }))
         }
       },
-      async ({ query, model, limit }) => {
+      async ({ query, model }) => {
         const geminiService = this.getGeminiService();
         if (!geminiService) {
           throw new Error('Gemini service not available. Please configure your API key in settings.');
@@ -127,8 +124,7 @@ export class MCPServer {
         try {
           const results = await semanticSearch(geminiService, storeName, {
             query,
-            model,
-            limit
+            model
           });
 
           return {

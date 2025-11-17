@@ -6,14 +6,11 @@ import { ChatModel } from '../../types';
 export interface SemanticSearchParams {
   query: string;
   model?: ChatModel;
-  limit?: number;
 }
 
 export interface SemanticSearchSource {
-  path?: string;
-  excerpt: string;
-  title?: string;
-  documentName?: string;
+  text: string;
+  files: string[];
 }
 
 export interface SemanticSearchResult {
@@ -22,43 +19,15 @@ export interface SemanticSearchResult {
 }
 
 /**
- * Extract vault path from grounding chunk metadata
- * Looks for obsidian_path in custom metadata
- */
-function extractPathFromChunk(chunk: any): string | undefined {
-  try {
-    // Try to extract from retrievedContext
-    if (chunk.retrievedContext) {
-      // Check for uri (may contain path)
-      if (chunk.retrievedContext.uri) {
-        return chunk.retrievedContext.uri;
-      }
-
-      // Check for title (may be set to path)
-      if (chunk.retrievedContext.title) {
-        return chunk.retrievedContext.title;
-      }
-    }
-
-    // Gemini may put path in different fields depending on API version
-    // This is a best-effort extraction
-    return undefined;
-  } catch (err) {
-    console.error('[MCP SemanticSearch] Failed to extract path from chunk:', err);
-    return undefined;
-  }
-}
-
-/**
  * Perform semantic search using Gemini FileSearch
- * Returns answer and sources with vault paths
+ * Returns answer and sources with grounding information
  */
 export async function semanticSearch(
   geminiService: GeminiService,
   storeName: string,
   params: SemanticSearchParams
 ): Promise<SemanticSearchResult> {
-  const { query, model = 'gemini-2.5-flash', limit = 10 } = params;
+  const { query, model = 'gemini-2.5-flash' } = params;
 
   if (!query || query.trim().length === 0) {
     throw new Error('Query parameter is required and cannot be empty');
@@ -71,22 +40,34 @@ export async function semanticSearch(
   try {
     const result = await geminiService.fileSearch(storeName, query, model);
 
-    // Extract sources from grounding chunks
+    // Map grounding supports to sources with file paths
     const sources: SemanticSearchSource[] = [];
     const chunks = result.groundingChunks || [];
+    const supports = result.groundingSupports || [];
 
-    for (const chunk of chunks.slice(0, limit)) {
-      const path = extractPathFromChunk(chunk);
-      const excerpt = chunk.retrievedContext?.text || '';
-      const title = chunk.retrievedContext?.title;
-      const documentName = chunk.retrievedContext?.documentName;
+    for (const support of supports) {
+      const segment = support.segment;
+      const chunkIndices = support.groundingChunkIndices || [];
 
-      sources.push({
-        path,
-        excerpt,
-        title,
-        documentName
-      });
+      // Map chunk indices to file paths (titles)
+      const files: string[] = [];
+      for (const index of chunkIndices) {
+        if (index >= 0 && index < chunks.length) {
+          const chunk = chunks[index];
+          const title = chunk.retrievedContext?.title;
+          if (title) {
+            files.push(title);
+          }
+        }
+      }
+
+      // Only add if we have both segment text and at least one file
+      if (segment?.text && files.length > 0) {
+        sources.push({
+          text: segment.text,
+          files
+        });
+      }
     }
 
     return {
