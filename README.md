@@ -1,17 +1,10 @@
-# EzRAG - AI-Powered Search for Obsidian
+# EzRAG - AI-Powered Search for Obsidian Notes
 
-Semantic search and AI chat for your Obsidian vault using Google [Gemini's File Search API](https://blog.google/technology/developers/file-search-gemini-api/).
+This plugin adds semantic search and AI chat for your Obsidian vault using Google [Gemini's File Search API](https://blog.google/technology/developers/file-search-gemini-api/). It also provides a built in MCP server so external tools can semantically search your vault.
 
-![Chat Interface Screenshot](screenshots/chat-interface.png)
+<img width="716" height="507" alt="Chat Interface Screenshot" src="https://github.com/user-attachments/assets/4026c1aa-0a9e-43f0-bbb8-31b95e645244" />
+
 *AI chat with your notes*
-
-## What It Does
-
-EzRAG indexes your Markdown notes with Google Gemini, enabling:
-- Natural language questions about your vault content
-- Semantic search across all notes
-- External tool access via MCP server
-- Automatic sync as you edit
 
 ## Setup
 
@@ -52,15 +45,12 @@ Since EzRAG is is still in development and hasn't been submitted to the Obsidian
 3. **Enable Indexing** (Desktop only)  
    Settings → EzRAG → Toggle "This machine is the runner"
 
-The plugin automatically creates a FileSearch store and begins indexing.
+Note that you should only enable the runner for a particular vault on a single machine or else bad things will happen.
 
-![Settings Screenshot](screenshots/settings.png)
+The plugin will automatically create a Gemini FileSearch store and begin indexing your notes.
+<img width="826" height="591" alt="Settings Screenshot" src="https://github.com/user-attachments/assets/8d3d2470-b305-4114-91ed-b8778af66e1e" />
+
 *Configuration panel*
-
-### Multi-Device Setup
-- Install on all devices
-- Enable "runner" on ONE desktop only
-- Other devices can search without indexing
 
 ## Usage
 
@@ -72,7 +62,8 @@ Example queries:
 - "Summarize yesterday's meeting notes"
 - "Find all mentions of machine learning"
 
-![Upload Queue Screenshot](screenshots/upload-queue.png)
+<img width="881" height="500" alt="Upload Queue Screenshot" src="https://github.com/user-attachments/assets/a1a51b87-2e8a-461a-8f6b-59ef0dea1098" />
+
 *Indexing progress view*
 
 ### MCP Server (External Tools)
