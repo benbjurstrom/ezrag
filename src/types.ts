@@ -37,14 +37,14 @@ export interface IndexedDocState {
   geminiDocumentName: string | null; // e.g., "fileSearchStores/.../documents/..." (null if not yet uploaded)
   contentHash: string; // SHA-256 of file content
   pathHash: string; // SHA-256 of vaultPath (stable ID for metadata)
-  status: 'pending' | 'ready' | 'error';
+  status: "pending" | "ready" | "error";
   lastLocalMtime: number; // File modification time
   lastIndexedAt: number; // When we last indexed
   tags: string[]; // Extracted from frontmatter
   errorMessage?: string;
 }
 
-export type IndexQueueOperation = 'upload' | 'delete';
+export type IndexQueueOperation = "upload" | "delete";
 
 export interface IndexQueueEntry {
   id: string;
@@ -64,9 +64,9 @@ export interface IndexQueueEntry {
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
-  apiKey: '',
-  storeName: '',
-  storeDisplayName: '',
+  apiKey: "",
+  storeName: "",
+  storeDisplayName: "",
   includeFolders: [],
   maxConcurrentUploads: 2,
   chunkingConfig: {
@@ -92,9 +92,9 @@ export const DEFAULT_DATA: PersistedData = {
 export interface GroundingChunk {
   retrievedContext?: {
     text?: string;
-    title?: string;  // Title of the attribution (may be populated from custom metadata)
-    uri?: string;    // URI reference (may be populated from custom metadata)
-    documentName?: string;  // Full document name (Vertex AI specific)
+    title?: string; // Title of the attribution (may be populated from custom metadata)
+    uri?: string; // URI reference (may be populated from custom metadata)
+    documentName?: string; // Full document name (Vertex AI specific)
   };
   web?: {
     uri?: string;
@@ -104,10 +104,10 @@ export interface GroundingChunk {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'model';
+  role: "user" | "model";
   text: string;
   groundingChunks?: GroundingChunk[];
   groundingSupports?: any[];
 }
 
-export type ChatModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';
+export type ChatModel = "gemini-2.5-flash" | "gemini-2.5-pro";

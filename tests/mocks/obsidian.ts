@@ -1,11 +1,11 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from "node:events";
 
 export const Platform = {
   isDesktopApp: true,
 };
 
 export function setIcon(element: HTMLElement, icon: string): void {
-  element.setAttribute('data-icon', icon);
+  element.setAttribute("data-icon", icon);
 }
 
 export class Events {
@@ -37,7 +37,11 @@ export class TFile extends TAbstractFile {
   public extension: string;
   public stat: { mtime: number };
 
-  constructor(path: string, extension: string = 'md', mtime: number = Date.now()) {
+  constructor(
+    path: string,
+    extension: string = "md",
+    mtime: number = Date.now(),
+  ) {
     super(path);
     this.extension = extension;
     this.stat = { mtime };
@@ -72,7 +76,7 @@ export class PluginSettingTab {
   constructor(app: App, plugin: any) {
     this.app = app;
     this.plugin = plugin;
-    this.containerEl = document.createElement('div');
+    this.containerEl = document.createElement("div");
   }
 
   display(): void {}
@@ -84,17 +88,17 @@ export class Modal {
 
   constructor(app: App) {
     this.app = app;
-    this.contentEl = document.createElement('div');
+    this.contentEl = document.createElement("div");
   }
 
   open(): void {
-    if (typeof (this as any).onOpen === 'function') {
+    if (typeof (this as any).onOpen === "function") {
       (this as any).onOpen();
     }
   }
 
   close(): void {
-    if (typeof (this as any).onClose === 'function') {
+    if (typeof (this as any).onClose === "function") {
       (this as any).onClose();
     }
   }
@@ -114,14 +118,14 @@ class ButtonComponent {
   }
 
   onClick(callback: () => void): this {
-    this.el.addEventListener('click', callback);
+    this.el.addEventListener("click", callback);
     return this;
   }
 }
 
 class ToggleComponent {
   constructor(private el: HTMLInputElement) {
-    this.el.type = 'checkbox';
+    this.el.type = "checkbox";
   }
 
   setValue(value: boolean): this {
@@ -130,14 +134,14 @@ class ToggleComponent {
   }
 
   onChange(callback: (value: boolean) => void): this {
-    this.el.addEventListener('change', () => callback(this.el.checked));
+    this.el.addEventListener("change", () => callback(this.el.checked));
     return this;
   }
 }
 
 class TextComponent {
   constructor(private el: HTMLInputElement) {
-    this.el.type = 'text';
+    this.el.type = "text";
   }
 
   setPlaceholder(value: string): this {
@@ -151,14 +155,14 @@ class TextComponent {
   }
 
   onChange(callback: (value: string) => void): this {
-    this.el.addEventListener('input', () => callback(this.el.value));
+    this.el.addEventListener("input", () => callback(this.el.value));
     return this;
   }
 }
 
 class SliderComponent {
   constructor(private el: HTMLInputElement) {
-    this.el.type = 'range';
+    this.el.type = "range";
   }
 
   setLimits(min: number, max: number, step: number): this {
@@ -178,7 +182,7 @@ class SliderComponent {
   }
 
   onChange(callback: (value: number) => void): this {
-    this.el.addEventListener('change', () => callback(Number(this.el.value)));
+    this.el.addEventListener("change", () => callback(Number(this.el.value)));
     return this;
   }
 }
@@ -191,14 +195,18 @@ export class Setting {
   private descEl: HTMLElement | null = null;
 
   constructor(containerEl: HTMLElement) {
-    this.settingEl = containerEl.createDiv({ cls: 'setting-item' });
-    this.infoEl = this.settingEl.createDiv({ cls: 'setting-item-info' });
-    this.controlEl = this.settingEl.createDiv({ cls: 'setting-item-control' });
+    this.settingEl = containerEl.createDiv({ cls: "setting-item" });
+    this.infoEl = this.settingEl.createDiv({ cls: "setting-item-info" });
+    this.controlEl = this.settingEl.createDiv({
+      cls: "setting-item-control",
+    });
   }
 
   setName(name: string): this {
     if (!this.nameEl) {
-      this.nameEl = this.infoEl.createEl('div', { cls: 'setting-item-name' });
+      this.nameEl = this.infoEl.createEl("div", {
+        cls: "setting-item-name",
+      });
     }
     this.nameEl.textContent = name;
     return this;
@@ -206,40 +214,42 @@ export class Setting {
 
   setDesc(description: string): this {
     if (!this.descEl) {
-      this.descEl = this.infoEl.createEl('div', { cls: 'setting-item-description' });
+      this.descEl = this.infoEl.createEl("div", {
+        cls: "setting-item-description",
+      });
     }
     this.descEl.textContent = description;
     return this;
   }
 
   setHeading(): this {
-    this.settingEl.classList.add('is-heading');
+    this.settingEl.classList.add("is-heading");
     return this;
   }
 
   addButton(callback: (button: ButtonComponent) => void): this {
-    const buttonEl = document.createElement('button');
+    const buttonEl = document.createElement("button");
     this.controlEl.appendChild(buttonEl);
     callback(new ButtonComponent(buttonEl));
     return this;
   }
 
   addToggle(callback: (toggle: ToggleComponent) => void): this {
-    const input = document.createElement('input');
+    const input = document.createElement("input");
     this.controlEl.appendChild(input);
     callback(new ToggleComponent(input));
     return this;
   }
 
   addText(callback: (text: TextComponent) => void): this {
-    const input = document.createElement('input');
+    const input = document.createElement("input");
     this.controlEl.appendChild(input);
     callback(new TextComponent(input));
     return this;
   }
 
   addSlider(callback: (slider: SliderComponent) => void): this {
-    const input = document.createElement('input');
+    const input = document.createElement("input");
     this.controlEl.appendChild(input);
     callback(new SliderComponent(input));
     return this;
@@ -262,7 +272,7 @@ export class Vault extends Events {
   }
 
   createMarkdownFile(path: string, content: string): TFile {
-    const extension = path.includes('.') ? path.split('.').pop() || 'md' : 'md';
+    const extension = path.includes(".") ? path.split(".").pop() || "md" : "md";
     const file = new TFile(path, extension);
     this.files.set(path, { file, content });
     return file;
@@ -287,7 +297,9 @@ export class Vault extends Events {
   }
 
   getMarkdownFiles(): TFile[] {
-    return [...this.files.values()].map(value => value.file).filter(file => file.extension === 'md');
+    return [...this.files.values()]
+      .map((value) => value.file)
+      .filter((file) => file.extension === "md");
   }
 
   getAbstractFileByPath(path: string): TAbstractFile | null {

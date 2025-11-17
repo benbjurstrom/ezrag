@@ -1,6 +1,6 @@
 // src/indexing/hashUtils.ts - Content hashing utilities
 
-import * as crypto from 'crypto';
+import * as crypto from "crypto";
 
 /**
  * Compute SHA-256 hash of content
@@ -12,18 +12,12 @@ import * as crypto from 'crypto';
  * we don't need to support mobile/browser environments.
  */
 export function computeContentHash(content: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(content)
-    .digest('hex');
+  return crypto.createHash("sha256").update(content).digest("hex");
 }
 
 /**
  * Compute SHA-256 hash of path
  */
 export function computePathHash(path: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(path)
-    .digest('hex');
+  return crypto.createHash("sha256").update(path).digest("hex");
 }

@@ -1,5 +1,5 @@
-import { afterEach, beforeAll, vi } from 'vitest';
-import { webcrypto } from 'node:crypto';
+import { afterEach, beforeAll, vi } from "vitest";
+import { webcrypto } from "node:crypto";
 
 function applyDomPolyfills(): void {
   const proto = HTMLElement.prototype as any;
@@ -16,8 +16,8 @@ function applyDomPolyfills(): void {
     proto.createEl = function (tag: string, options: any = {}): HTMLElement {
       const element = document.createElement(tag);
       const classes = options.cls;
-      if (typeof classes === 'string' && classes.length > 0) {
-        element.classList.add(...classes.split(' ').filter(Boolean));
+      if (typeof classes === "string" && classes.length > 0) {
+        element.classList.add(...classes.split(" ").filter(Boolean));
       } else if (Array.isArray(classes)) {
         element.classList.add(...classes);
       }
@@ -38,7 +38,7 @@ function applyDomPolyfills(): void {
 
   if (!proto.createDiv) {
     proto.createDiv = function (options: any = {}): HTMLElement {
-      return this.createEl('div', options);
+      return this.createEl("div", options);
     };
   }
 }

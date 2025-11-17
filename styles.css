@@ -250,7 +250,9 @@ button.ezrag-chat-send {
 }
 
 @keyframes ezrag-loading-bounce {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     transform: scale(0.8);
     opacity: 0.5;
   }
@@ -629,4 +631,3 @@ button.ezrag-chat-send {
 .ezrag-queue-table th:nth-child(5) {
   text-align: right;
 }
-

@@ -1,4 +1,4 @@
-declare module '@google/genai' {
+declare module "@google/genai" {
   export class GoogleGenAI {
     constructor(config: Record<string, unknown>);
     files: any;
@@ -8,7 +8,7 @@ declare module '@google/genai' {
   }
 }
 
-declare module 'p-queue' {
+declare module "p-queue" {
   export default class PQueue {
     constructor(options?: { concurrency?: number });
     add<T>(fn: () => Promise<T>): Promise<T>;

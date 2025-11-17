@@ -1,4 +1,4 @@
-import type { GoogleGenAI } from '@google/genai';
+import type { GoogleGenAI } from "@google/genai";
 
 type UploadConfig = {
   mimeType?: string;
@@ -12,7 +12,7 @@ type PatchedApiClient = {
   uploadFileToFileSearchStore: (
     fileSearchStoreName: string,
     file: File | Blob | string,
-    config?: UploadConfig
+    config?: UploadConfig,
   ) => Promise<unknown>;
   fetchUploadUrl: (
     path: string,
@@ -20,16 +20,18 @@ type PatchedApiClient = {
     mimeType: string,
     fileName: string,
     body: Record<string, unknown>,
-    httpOptions?: Record<string, unknown>
+    httpOptions?: Record<string, unknown>,
   ) => Promise<string>;
   getFileName: (file: File | Blob | string) => string;
   clientOptions?: {
     uploader?: {
-      stat: (file: File | Blob | string) => Promise<{ size: number; type?: string }>;
+      stat: (
+        file: File | Blob | string,
+      ) => Promise<{ size: number; type?: string }>;
       uploadToFileSearchStore: (
         file: File | Blob | string,
         uploadUrl: string,
-        apiClient: PatchedApiClient
+        apiClient: PatchedApiClient,
       ) => Promise<unknown>;
     };
   };
@@ -55,7 +57,7 @@ export function ensureGeminiUploadPatch(ai: GoogleGenAI): void {
     this: PatchedApiClient,
     fileSearchStoreName: string,
     file: File | Blob | string,
-    config?: UploadConfig
+    config?: UploadConfig,
   ) {
     const resolvedConfig = config ?? {};
     const fileStat = await uploader.stat(file);
@@ -63,7 +65,9 @@ export function ensureGeminiUploadPatch(ai: GoogleGenAI): void {
     const mimeType = resolvedConfig.mimeType ?? fileStat.type;
 
     if (!mimeType) {
-      throw new Error('Cannot determine mimeType. Provide one via config.mimeType.');
+      throw new Error(
+        "Cannot determine mimeType. Provide one via config.mimeType.",
+      );
     }
 
     const body: Record<string, unknown> = {};
@@ -85,7 +89,7 @@ export function ensureGeminiUploadPatch(ai: GoogleGenAI): void {
       mimeType,
       fileName,
       body,
-      resolvedConfig.httpOptions
+      resolvedConfig.httpOptions,
     );
 
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);

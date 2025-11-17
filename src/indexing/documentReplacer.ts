@@ -1,6 +1,6 @@
-import { GeminiService } from '../gemini/geminiService';
-import { ChunkingConfig } from '../types';
-import { GeminiMetadataField } from './documentMetadata';
+import { GeminiService } from "../gemini/geminiService";
+import { ChunkingConfig } from "../types";
+import { GeminiMetadataField } from "./documentMetadata";
 
 export interface DocumentReplaceRequest {
   storeName: string;
@@ -14,7 +14,10 @@ export interface DocumentReplaceRequest {
 export class DocumentReplacer {
   constructor(private gemini: GeminiService) {}
 
-  async replaceDocument(existingDocumentName: string | null | undefined, request: DocumentReplaceRequest): Promise<string> {
+  async replaceDocument(
+    existingDocumentName: string | null | undefined,
+    request: DocumentReplaceRequest,
+  ): Promise<string> {
     if (existingDocumentName) {
       try {
         await this.gemini.deleteDocument(existingDocumentName);
@@ -31,13 +34,15 @@ export class DocumentReplacer {
       displayName: request.displayName,
       metadata: request.metadata,
       chunkingConfig: request.chunkingConfig,
-      mimeType: request.mimeType ?? 'text/markdown',
+      mimeType: request.mimeType ?? "text/markdown",
     });
   }
 
   private isNotFoundError(err: unknown): boolean {
-    const message = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+    const message = (
+      err instanceof Error ? err.message : String(err ?? "")
+    ).toLowerCase();
     if (!message) return false;
-    return message.includes('404') || message.includes('not found');
+    return message.includes("404") || message.includes("not found");
   }
 }

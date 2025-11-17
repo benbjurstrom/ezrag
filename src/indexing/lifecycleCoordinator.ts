@@ -1,9 +1,12 @@
-import { App, Notice, Platform } from 'obsidian';
-import { ConnectionManager, ConnectionState } from '../connection/connectionManager';
-import { RunnerStateManager } from '../state/runnerState';
-import { StateManager } from '../state/state';
-import { GeminiService } from '../gemini/geminiService';
-import { IndexingController } from './indexingController';
+import { App, Notice, Platform } from "obsidian";
+import {
+  ConnectionManager,
+  ConnectionState,
+} from "../connection/connectionManager";
+import { RunnerStateManager } from "../state/runnerState";
+import { StateManager } from "../state/state";
+import { GeminiService } from "../gemini/geminiService";
+import { IndexingController } from "./indexingController";
 
 export interface LifecycleCoordinatorOptions {
   app: App;
@@ -33,8 +36,9 @@ export class LifecycleCoordinator {
     }
 
     const reason = state.online
-      ? (state.apiKeyError ?? 'Gemini API key needs to be validated in settings.')
-      : 'No internet connection detected.';
+      ? (state.apiKeyError ??
+        "Gemini API key needs to be validated in settings.")
+      : "No internet connection detected.";
 
     new Notice(`Cannot ${action}: ${reason}`);
     return false;
@@ -46,14 +50,14 @@ export class LifecycleCoordinator {
       controller?.stop();
       this.pausedByDisconnect = false;
       this.options.onStatusChange();
-      return 'Indexing is only available on desktop.';
+      return "Indexing is only available on desktop.";
     }
 
     if (!this.options.runnerManager.isRunner()) {
       controller?.stop();
       this.pausedByDisconnect = false;
       this.options.onStatusChange();
-      return 'Runner disabled. Indexing stopped.';
+      return "Runner disabled. Indexing stopped.";
     }
 
     const ready = await this.ensureGeminiResources();
@@ -62,25 +66,25 @@ export class LifecycleCoordinator {
       controller?.stop();
       this.pausedByDisconnect = false;
       this.options.onStatusChange();
-      return 'Runner enabled but waiting for API configuration.';
+      return "Runner enabled but waiting for API configuration.";
     }
 
     if (!controller) {
-      return 'Indexing controller not ready.';
+      return "Indexing controller not ready.";
     }
 
     const result = await controller.start(service);
     this.options.onStatusChange();
 
-    if (result === 'started') {
-      return 'Indexing started. Scanning your vault...';
+    if (result === "started") {
+      return "Indexing started. Scanning your vault...";
     }
 
-    if (result === 'resumed') {
-      return 'Indexing resumed.';
+    if (result === "resumed") {
+      return "Indexing resumed.";
     }
 
-    return 'Indexing already running.';
+    return "Indexing already running.";
   }
 
   async ensureGeminiResources(): Promise<boolean> {
@@ -91,7 +95,7 @@ export class LifecycleCoordinator {
 
     const settings = this.options.stateManager.getSettings();
     if (!settings.storeName) {
-      if (!this.requireConnection('create a Gemini FileSearch store')) {
+      if (!this.requireConnection("create a Gemini FileSearch store")) {
         return false;
       }
       const vaultName = this.options.app.vault.getName();
@@ -105,8 +109,8 @@ export class LifecycleCoordinator {
         });
         await this.options.saveState();
       } catch (err) {
-        console.error('[EzRAG] Failed to create FileSearchStore:', err);
-        new Notice('Failed to create Gemini FileSearchStore. Check API key.');
+        console.error("[EzRAG] Failed to create FileSearchStore:", err);
+        new Notice("Failed to create Gemini FileSearchStore. Check API key.");
         return false;
       }
     }
@@ -115,7 +119,8 @@ export class LifecycleCoordinator {
   }
 
   handleConnectionChange(state: ConnectionState): void {
-    const previousConnected = this.lastConnectionState?.connected ?? state.connected;
+    const previousConnected =
+      this.lastConnectionState?.connected ?? state.connected;
     const justLost = previousConnected && !state.connected;
     const justRestored = !previousConnected && state.connected;
     this.lastConnectionState = state;
@@ -138,14 +143,14 @@ export class LifecycleCoordinator {
     if (justLost && isActive && !isPaused) {
       controller.pause();
       this.pausedByDisconnect = true;
-      new Notice('EzRAG: Disconnected. Indexing paused.');
+      new Notice("EzRAG: Disconnected. Indexing paused.");
     } else if (justRestored) {
       if (this.pausedByDisconnect && isPaused) {
         controller.resume();
         this.pausedByDisconnect = false;
-        new Notice('EzRAG: Connection restored. Resuming indexing.');
+        new Notice("EzRAG: Connection restored. Resuming indexing.");
       } else if (!isActive) {
-        void this.refreshIndexingState('connection');
+        void this.refreshIndexingState("connection");
       }
     }
   }

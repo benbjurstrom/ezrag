@@ -1,8 +1,8 @@
 // src/gemini/geminiService.ts - Gemini API wrapper (Obsidian-agnostic)
 
-import { GoogleGenAI } from '@google/genai';
-import { ChunkingConfig, ChatModel } from '../types';
-import { ensureGeminiUploadPatch } from './geminiSdkPatch';
+import { GoogleGenAI } from "@google/genai";
+import { ChunkingConfig, ChatModel } from "../types";
+import { ensureGeminiUploadPatch } from "./geminiSdkPatch";
 
 export interface CustomMetadataEntry {
   key: string;
@@ -51,7 +51,7 @@ export class GeminiService {
 
     // Create new store if not found
     const newStore = await this.ai.fileSearchStores.create({
-      config: { displayName }
+      config: { displayName },
     });
 
     return newStore.name!;
@@ -64,12 +64,19 @@ export class GeminiService {
    * AND the document state is STATE_ACTIVE (or STATE_FAILED)
    */
   async uploadDocument(params: UploadDocumentParams): Promise<string> {
-    const { storeName, content, displayName, metadata, mimeType = 'text/markdown', chunkingConfig } = params;
+    const {
+      storeName,
+      content,
+      displayName,
+      metadata,
+      mimeType = "text/markdown",
+      chunkingConfig,
+    } = params;
 
     // Validate content is not empty (safety check - should be caught earlier)
     const trimmedContent = content.trim();
     if (trimmedContent.length === 0) {
-      throw new Error('Cannot upload empty file - content must not be empty');
+      throw new Error("Cannot upload empty file - content must not be empty");
     }
 
     // Convert content to a File-like object
@@ -88,7 +95,7 @@ export class GeminiService {
         whiteSpaceConfig: {
           maxTokensPerChunk: chunkingConfig.maxTokensPerChunk,
           maxOverlapTokens: chunkingConfig.maxOverlapTokens,
-        }
+        },
       };
     }
 
@@ -112,7 +119,7 @@ export class GeminiService {
       return response.documentName as string;
     }
 
-    throw new Error('Upload failed: no document name in response');
+    throw new Error("Upload failed: no document name in response");
   }
 
   /**
@@ -121,7 +128,7 @@ export class GeminiService {
   async deleteDocument(documentName: string): Promise<void> {
     await this.ai.fileSearchStores.documents.delete({
       name: documentName,
-      config: { force: true }
+      config: { force: true },
     });
   }
 
@@ -140,7 +147,16 @@ export class GeminiService {
    * - Response contains: { documents: [], nextPageToken: string }
    * - Loop continues while nextPageToken is present
    */
-  async listDocuments(storeName: string, options?: { onPage?: (info: { pageIndex: number; docs: any[]; nextPageToken?: string }) => void }): Promise<any[]> {
+  async listDocuments(
+    storeName: string,
+    options?: {
+      onPage?: (info: {
+        pageIndex: number;
+        docs: any[];
+        nextPageToken?: string;
+      }) => void;
+    },
+  ): Promise<any[]> {
     const allDocs: any[] = [];
     let pageToken: string | undefined = undefined;
     let pageIndex = 0;
@@ -150,8 +166,8 @@ export class GeminiService {
         parent: storeName,
         config: {
           pageSize: 20, // Maximum allowed by API
-          pageToken: pageToken
-        }
+          pageToken: pageToken,
+        },
       });
 
       const pageDocs: any[] = [];
@@ -172,7 +188,6 @@ export class GeminiService {
       // If nextPageToken is present, there are more pages to fetch
       pageToken = response.nextPageToken;
       pageIndex++;
-
     } while (pageToken);
 
     return allDocs;
@@ -183,14 +198,18 @@ export class GeminiService {
    */
   async getDocument(documentName: string): Promise<any> {
     return await this.ai.fileSearchStores.documents.get({
-      name: documentName
+      name: documentName,
     });
   }
 
   /**
    * Query the FileSearchStore
    */
-  async fileSearch(storeName: string, query: string, model: ChatModel = 'gemini-2.5-flash'): Promise<FileSearchResult> {
+  async fileSearch(
+    storeName: string,
+    query: string,
+    model: ChatModel = "gemini-2.5-flash",
+  ): Promise<FileSearchResult> {
     const response = await this.ai.models.generateContent({
       model,
       contents: query,
@@ -198,11 +217,11 @@ export class GeminiService {
         tools: [
           {
             fileSearch: {
-              fileSearchStoreNames: [storeName]
-            }
-          }
-        ]
-      }
+              fileSearchStoreNames: [storeName],
+            },
+          },
+        ],
+      },
     });
 
     const groundingMetadata = response.candidates?.[0]?.groundingMetadata || {};
@@ -210,9 +229,9 @@ export class GeminiService {
     const groundingSupports = groundingMetadata.groundingSupports || [];
 
     return {
-      text: response.text || '',
+      text: response.text || "",
       groundingChunks,
-      groundingSupports
+      groundingSupports,
     };
   }
 
@@ -221,7 +240,7 @@ export class GeminiService {
    */
   async getStore(storeName: string): Promise<any> {
     return await this.ai.fileSearchStores.get({
-      name: storeName
+      name: storeName,
     });
   }
 
@@ -245,11 +264,11 @@ export class GeminiService {
   async deleteStore(storeName: string): Promise<void> {
     await this.ai.fileSearchStores.delete({
       name: storeName,
-      config: { force: true }
+      config: { force: true },
     });
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

@@ -1,12 +1,12 @@
 // src/indexing/indexingController.ts - Controls indexing lifecycle
 
-import { App, TFile } from 'obsidian';
-import { IndexManager, IndexingStats } from './indexManager';
-import { StateManager } from '../state/state';
-import { GeminiService } from '../gemini/geminiService';
-import { ConnectionManager } from '../connection/connectionManager';
+import { App, TFile } from "obsidian";
+import { IndexManager, IndexingStats } from "./indexManager";
+import { StateManager } from "../state/state";
+import { GeminiService } from "../gemini/geminiService";
+import { ConnectionManager } from "../connection/connectionManager";
 
-export type IndexingPhase = 'idle' | 'scanning' | 'indexing' | 'paused';
+export type IndexingPhase = "idle" | "scanning" | "indexing" | "paused";
 
 export interface IndexingControllerOptions {
   app: App;
@@ -29,8 +29,13 @@ export class IndexingController {
   private readonly stateManager: StateManager;
   private readonly persistState: () => Promise<void>;
   private readonly listeners = new Set<SnapshotListener>();
-  private phase: IndexingPhase = 'idle';
-  private stats: IndexingStats = { total: 0, completed: 0, failed: 0, pending: 0 };
+  private phase: IndexingPhase = "idle";
+  private stats: IndexingStats = {
+    total: 0,
+    completed: 0,
+    failed: 0,
+    pending: 0,
+  };
   private saveTimeout: number | null = null;
   private disposed = false;
   private onStateChange?: (snapshot: ControllerSnapshot) => void;
@@ -65,7 +70,7 @@ export class IndexingController {
   }
 
   isPaused(): boolean {
-    return this.phase === 'paused';
+    return this.phase === "paused";
   }
 
   getIndexManager(): IndexManager | null {
@@ -75,14 +80,16 @@ export class IndexingController {
   /**
    * Start indexing (or resume if paused).
    */
-  async start(geminiService: GeminiService): Promise<'started' | 'resumed' | 'already-running'> {
+  async start(
+    geminiService: GeminiService,
+  ): Promise<"started" | "resumed" | "already-running"> {
     if (this.indexManager) {
-      if (this.phase === 'paused') {
+      if (this.phase === "paused") {
         this.indexManager.resume();
-        this.setPhase('indexing');
-        return 'resumed';
+        this.setPhase("indexing");
+        return "resumed";
       }
-      return 'already-running';
+      return "already-running";
     }
 
     this.indexManager = new IndexManager({
@@ -97,26 +104,26 @@ export class IndexingController {
     });
 
     this.stats = this.indexManager.getStats();
-    this.setPhase('scanning');
+    this.setPhase("scanning");
     this.notify();
 
     await this.indexManager.reconcileOnStartup();
     this.stats = this.indexManager.getStats();
-    this.setPhase(this.stats.pending > 0 ? 'indexing' : 'idle');
+    this.setPhase(this.stats.pending > 0 ? "indexing" : "idle");
     this.notify();
 
-    return 'started';
+    return "started";
   }
 
   /**
    * Pause current queue (runner stays enabled).
    */
   pause(): boolean {
-    if (!this.indexManager || this.phase === 'paused') {
+    if (!this.indexManager || this.phase === "paused") {
       return false;
     }
     this.indexManager.pause();
-    this.setPhase('paused');
+    this.setPhase("paused");
     this.notify();
     return true;
   }
@@ -125,11 +132,11 @@ export class IndexingController {
    * Resume queue after pause.
    */
   resume(): boolean {
-    if (!this.indexManager || this.phase !== 'paused') {
+    if (!this.indexManager || this.phase !== "paused") {
       return false;
     }
     this.indexManager.resume();
-    this.setPhase(this.stats.pending > 0 ? 'indexing' : 'idle');
+    this.setPhase(this.stats.pending > 0 ? "indexing" : "idle");
     this.notify();
     return true;
   }
@@ -143,7 +150,7 @@ export class IndexingController {
       this.indexManager = null;
     }
     this.stats = { total: 0, completed: 0, failed: 0, pending: 0 };
-    this.setPhase('idle');
+    this.setPhase("idle");
     this.notify();
   }
 
@@ -152,11 +159,11 @@ export class IndexingController {
    */
   async runFullReconcile(): Promise<void> {
     if (!this.indexManager) return;
-    this.setPhase('scanning');
+    this.setPhase("scanning");
     this.notify();
     await this.indexManager.reconcileOnStartup();
     this.stats = this.indexManager.getStats();
-    this.setPhase(this.stats.pending > 0 ? 'indexing' : 'idle');
+    this.setPhase(this.stats.pending > 0 ? "indexing" : "idle");
     this.notify();
   }
 
@@ -164,30 +171,35 @@ export class IndexingController {
    * Event helpers
    */
   handleFileCreated(file: TFile): void {
-    if (!this.indexManager || this.phase === 'paused') return;
+    if (!this.indexManager || this.phase === "paused") return;
     void this.indexManager.onFileCreated(file);
   }
 
   handleFileModified(file: TFile): void {
-    if (!this.indexManager || this.phase === 'paused') return;
+    if (!this.indexManager || this.phase === "paused") return;
     void this.indexManager.onFileModified(file);
   }
 
   handleFileRenamed(file: TFile, oldPath: string): void {
-    if (!this.indexManager || this.phase === 'paused') return;
+    if (!this.indexManager || this.phase === "paused") return;
     void this.indexManager.onFileRenamed(file, oldPath);
   }
 
   handleFileDeleted(path: string): void {
-    if (!this.indexManager || this.phase === 'paused') return;
+    if (!this.indexManager || this.phase === "paused") return;
     void this.indexManager.onFileDeleted(path);
   }
 
   clearQueue(): void {
     this.indexManager?.clearQueue();
-    this.stats = this.indexManager?.getStats() ?? { total: 0, completed: 0, failed: 0, pending: 0 };
+    this.stats = this.indexManager?.getStats() ?? {
+      total: 0,
+      completed: 0,
+      failed: 0,
+      pending: 0,
+    };
     if (!this.isPaused()) {
-      this.setPhase('idle');
+      this.setPhase("idle");
     }
     this.notify();
   }
@@ -204,11 +216,11 @@ export class IndexingController {
 
   private handleProgress(stats: IndexingStats): void {
     this.stats = stats;
-    if (this.phase !== 'paused') {
-      if (stats.pending > 0 && this.phase !== 'scanning') {
-        this.setPhase('indexing');
-      } else if (stats.pending === 0 && this.phase === 'indexing') {
-        this.setPhase('idle');
+    if (this.phase !== "paused") {
+      if (stats.pending > 0 && this.phase !== "scanning") {
+        this.setPhase("indexing");
+      } else if (stats.pending === 0 && this.phase === "indexing") {
+        this.setPhase("idle");
       }
     }
     this.notify();
@@ -223,7 +235,7 @@ export class IndexingController {
       try {
         await this.persistState();
       } catch (err) {
-        console.error('[IndexingController] Failed to persist state', err);
+        console.error("[IndexingController] Failed to persist state", err);
       }
     }, 500);
   }

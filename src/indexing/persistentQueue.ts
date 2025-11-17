@@ -1,7 +1,7 @@
-import PQueue from 'p-queue';
-import { ConnectionManager } from '../connection/connectionManager';
-import { StateManager } from '../state/state';
-import { IndexQueueEntry } from '../types';
+import PQueue from "p-queue";
+import { ConnectionManager } from "../connection/connectionManager";
+import { StateManager } from "../state/state";
+import { IndexQueueEntry } from "../types";
 
 export type QueueEntryHandler = (entry: IndexQueueEntry) => Promise<void>;
 
@@ -12,7 +12,11 @@ export interface PersistentQueueOptions {
   processUpload: QueueEntryHandler;
   processDelete: QueueEntryHandler;
   onEntrySuccess: (entry: IndexQueueEntry, removed: boolean) => void;
-  onEntryFailure: (entry: IndexQueueEntry, error: Error | null, removed: boolean) => void;
+  onEntryFailure: (
+    entry: IndexQueueEntry,
+    error: Error | null,
+    removed: boolean,
+  ) => void;
   onStatus: (status: string) => void;
   onStateChange: () => void;
 }
@@ -100,7 +104,7 @@ export class PersistentQueue {
           }
         })
         .catch((err: unknown) => {
-          console.error('[PersistentQueue] Queue entry crashed', err);
+          console.error("[PersistentQueue] Queue entry crashed", err);
         });
     }
   }
@@ -129,12 +133,12 @@ export class PersistentQueue {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (!this.options.connectionManager.isConnected()) {
         this.recordAttempt(entry, attempt === 0 ? 0 : 1);
-        this.options.onStatus('Waiting for connection');
+        this.options.onStatus("Waiting for connection");
         return;
       }
 
       try {
-        if (entry.operation === 'upload') {
+        if (entry.operation === "upload") {
           await this.options.processUpload(entry);
         } else {
           await this.options.processDelete(entry);
@@ -150,7 +154,7 @@ export class PersistentQueue {
         if (this.isAuthError(err)) {
           this.options.connectionManager.setApiKeyValid(
             false,
-            'Gemini rejected the API key. Please verify it in settings.'
+            "Gemini rejected the API key. Please verify it in settings.",
           );
           return;
         }
@@ -162,14 +166,16 @@ export class PersistentQueue {
 
         const delayMs = Math.pow(2, attempt) * 1000;
         const seconds = Math.round(delayMs / 100) / 10;
-        this.options.onStatus(`Retry ${attempt + 1}/${maxRetries} for ${entry.vaultPath} in ${seconds}s`);
+        this.options.onStatus(
+          `Retry ${attempt + 1}/${maxRetries} for ${entry.vaultPath} in ${seconds}s`,
+        );
         await this.delay(delayMs);
       }
     }
 
     if (!this.options.connectionManager.isConnected()) {
       this.recordAttempt(entry, 1);
-      this.options.onStatus('Waiting for connection');
+      this.options.onStatus("Waiting for connection");
       return;
     }
 
@@ -193,7 +199,9 @@ export class PersistentQueue {
   }
 
   private removeQueueEntryIfCurrent(entry: IndexQueueEntry): boolean {
-    const current = this.options.stateManager.findQueueEntryByPath(entry.vaultPath);
+    const current = this.options.stateManager.findQueueEntryByPath(
+      entry.vaultPath,
+    );
     if (current && current.enqueuedAt !== entry.enqueuedAt) {
       return false;
     }
@@ -202,28 +210,28 @@ export class PersistentQueue {
   }
 
   private isRetryableError(err: any): boolean {
-    const message = err?.message?.toLowerCase() || '';
+    const message = err?.message?.toLowerCase() || "";
     return (
-      message.includes('network') ||
-      message.includes('timeout') ||
-      message.includes('rate limit') ||
-      message.includes('429') ||
-      message.includes('503') ||
-      message.includes('econnreset') ||
-      message.includes('enotfound') ||
-      message.includes('failed to fetch') ||
-      message.includes('offline')
+      message.includes("network") ||
+      message.includes("timeout") ||
+      message.includes("rate limit") ||
+      message.includes("429") ||
+      message.includes("503") ||
+      message.includes("econnreset") ||
+      message.includes("enotfound") ||
+      message.includes("failed to fetch") ||
+      message.includes("offline")
     );
   }
 
   private isAuthError(err: any): boolean {
-    const message = (err?.message ?? '').toLowerCase();
+    const message = (err?.message ?? "").toLowerCase();
     if (!message) return false;
     return (
-      message.includes('401') ||
-      message.includes('403') ||
-      message.includes('unauthorized') ||
-      message.includes('api key')
+      message.includes("401") ||
+      message.includes("403") ||
+      message.includes("unauthorized") ||
+      message.includes("api key")
     );
   }
 

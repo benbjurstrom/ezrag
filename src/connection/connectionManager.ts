@@ -30,7 +30,7 @@ type ConnectionListener = (state: ConnectionState) => void;
  */
 export class ConnectionManager {
   private state: ConnectionState = {
-    online: typeof navigator !== 'undefined' ? navigator.onLine : true,
+    online: typeof navigator !== "undefined" ? navigator.onLine : true,
     apiKeyValid: false,
     connected: false,
   };
@@ -51,10 +51,10 @@ export class ConnectionManager {
    * Set up browser online/offline event listeners
    */
   private setupNetworkListeners(): void {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
-    window.addEventListener('online', this.onlineHandler);
-    window.addEventListener('offline', this.offlineHandler);
+    window.addEventListener("online", this.onlineHandler);
+    window.addEventListener("offline", this.offlineHandler);
   }
 
   /**
@@ -130,11 +130,11 @@ export class ConnectionManager {
    */
   private notifyListeners(): void {
     const state = this.getState();
-    this.listeners.forEach(listener => {
+    this.listeners.forEach((listener) => {
       try {
         listener(state);
       } catch (err) {
-        console.error('[EzRAG] Error in connection listener:', err);
+        console.error("[EzRAG] Error in connection listener:", err);
       }
     });
   }
@@ -143,9 +143,9 @@ export class ConnectionManager {
    * Clean up event listeners
    */
   dispose(): void {
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('online', this.onlineHandler);
-      window.removeEventListener('offline', this.offlineHandler);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("online", this.onlineHandler);
+      window.removeEventListener("offline", this.offlineHandler);
     }
     this.listeners = [];
   }

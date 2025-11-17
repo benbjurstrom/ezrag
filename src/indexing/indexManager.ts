@@ -1,16 +1,20 @@
 // src/indexing/indexManager.ts - Main indexing orchestrator
 
-import { App, TFile, Vault } from 'obsidian';
-import { StateManager } from '../state/state';
-import { IndexedDocState, IndexQueueEntry, IndexQueueOperation } from '../types';
-import { GeminiService } from '../gemini/geminiService';
-import { Janitor } from './janitor';
-import { computePathHash } from './hashUtils';
-import { ConnectionManager } from '../connection/connectionManager';
-import { FilePreparationService, PreparedFile } from './filePreparationService';
-import { buildDocumentMetadata } from './documentMetadata';
-import { DocumentReplacer } from './documentReplacer';
-import { PersistentQueue } from './persistentQueue';
+import { App, TFile, Vault } from "obsidian";
+import { StateManager } from "../state/state";
+import {
+  IndexedDocState,
+  IndexQueueEntry,
+  IndexQueueOperation,
+} from "../types";
+import { GeminiService } from "../gemini/geminiService";
+import { Janitor } from "./janitor";
+import { computePathHash } from "./hashUtils";
+import { ConnectionManager } from "../connection/connectionManager";
+import { FilePreparationService, PreparedFile } from "./filePreparationService";
+import { buildDocumentMetadata } from "./documentMetadata";
+import { DocumentReplacer } from "./documentReplacer";
+import { PersistentQueue } from "./persistentQueue";
 
 export interface IndexingStats {
   total: number;
@@ -75,7 +79,7 @@ export class IndexManager {
         if (removed) {
           this.stats.pending = Math.max(0, this.stats.pending - 1);
         }
-        this.updateProgress('Indexing');
+        this.updateProgress("Indexing");
         this.notifyStateChange();
       },
       onEntryFailure: (entry, error, removed) => {
@@ -83,10 +87,10 @@ export class IndexManager {
         if (removed) {
           this.stats.pending = Math.max(0, this.stats.pending - 1);
         }
-        if (entry.operation === 'upload' && removed) {
+        if (entry.operation === "upload" && removed) {
           this.markDocError(entry.vaultPath, error);
         }
-        this.updateProgress('Indexing');
+        this.updateProgress("Indexing");
         this.notifyStateChange();
       },
       onStatus: (status) => this.updateProgress(status),
@@ -120,7 +124,7 @@ export class IndexManager {
    */
   async reconcileOnStartup(syncWithRemote: boolean = false): Promise<void> {
     const files = this.getIndexableFiles();
-    this.updateProgress('Scanning vault for changes');
+    this.updateProgress("Scanning vault for changes");
 
     const pendingQueueCount = this.state.getQueueEntries().length;
     this.stats.total = pendingQueueCount;
@@ -128,30 +132,36 @@ export class IndexManager {
     this.stats.failed = 0;
     this.stats.pending = pendingQueueCount;
 
-    this.updateProgress('Scanning');
+    this.updateProgress("Scanning");
     this.queueManager.notifyQueueChanged();
 
     // If syncing with remote, fetch all remote docs first
     let remoteDocsByPathHash = new Map<string, any>();
-    const shouldSyncRemote = syncWithRemote && this.connectionManager.isConnected();
+    const shouldSyncRemote =
+      syncWithRemote && this.connectionManager.isConnected();
     if (shouldSyncRemote) {
-      this.updateProgress('Fetching remote documents for reconciliation');
+      this.updateProgress("Fetching remote documents for reconciliation");
       try {
         const settings = this.state.getSettings();
         const remoteDocs = await this.gemini.listDocuments(settings.storeName);
 
         for (const doc of remoteDocs) {
-          const pathHashMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path_hash');
+          const pathHashMeta = doc.customMetadata?.find(
+            (m: any) => m.key === "obsidian_path_hash",
+          );
           if (pathHashMeta?.stringValue) {
             remoteDocsByPathHash.set(pathHashMeta.stringValue, doc);
           }
         }
-        this.updateProgress('Reconciling remote documents');
+        this.updateProgress("Reconciling remote documents");
       } catch (err) {
-        console.error('[IndexManager] Failed to fetch remote docs, proceeding without sync:', err);
+        console.error(
+          "[IndexManager] Failed to fetch remote docs, proceeding without sync:",
+          err,
+        );
       }
     } else if (syncWithRemote && !this.connectionManager.isConnected()) {
-      this.updateProgress('Waiting for connection to reconcile remote index');
+      this.updateProgress("Waiting for connection to reconcile remote index");
     }
 
     // Scan all files and queue those that need indexing
@@ -159,7 +169,7 @@ export class IndexManager {
     for (const file of files) {
       try {
         const preparation = await this.filePreparation.prepare(file);
-        if (preparation.type === 'skip') {
+        if (preparation.type === "skip") {
           this.handleEmptyFile(file.path);
           continue;
         }
@@ -170,7 +180,9 @@ export class IndexManager {
 
         if (shouldSyncRemote && !state && remoteDocsByPathHash.has(pathHash)) {
           const remoteDoc = remoteDocsByPathHash.get(pathHash);
-          const remoteHashMeta = remoteDoc.customMetadata?.find((m: any) => m.key === 'obsidian_content_hash');
+          const remoteHashMeta = remoteDoc.customMetadata?.find(
+            (m: any) => m.key === "obsidian_content_hash",
+          );
           const remoteHash = remoteHashMeta?.stringValue;
 
           if (remoteHash === contentHash) {
@@ -179,7 +191,7 @@ export class IndexManager {
               geminiDocumentName: remoteDoc.name,
               contentHash,
               pathHash,
-              status: 'ready',
+              status: "ready",
               lastLocalMtime: file.stat.mtime,
               lastIndexedAt: Date.now(),
               tags,
@@ -191,7 +203,7 @@ export class IndexManager {
         const needsIndexing =
           !state ||
           state.contentHash !== contentHash ||
-          state.status === 'error';
+          state.status === "error";
 
         if (needsIndexing) {
           this.queueIndexJob(file, contentHash);
@@ -201,7 +213,7 @@ export class IndexManager {
       }
     }
 
-    this.updateProgress('Indexing');
+    this.updateProgress("Indexing");
     this.queueManager.notifyQueueChanged();
   }
 
@@ -216,7 +228,7 @@ export class IndexManager {
     // Read and hash once
     try {
       const preparation = await this.filePreparation.prepare(file);
-      if (preparation.type === 'skip') {
+      if (preparation.type === "skip") {
         this.handleEmptyFile(file.path);
         return;
       }
@@ -237,7 +249,7 @@ export class IndexManager {
 
     try {
       const preparation = await this.filePreparation.prepare(file);
-      if (preparation.type === 'skip') {
+      if (preparation.type === "skip") {
         this.handleEmptyFile(file.path);
         return;
       }
@@ -247,7 +259,11 @@ export class IndexManager {
 
       // Only queue if content actually changed
       // Apply throttle for modifications to batch rapid edits
-      if (!state || state.contentHash !== contentHash || state.status === 'error') {
+      if (
+        !state ||
+        state.contentHash !== contentHash ||
+        state.status === "error"
+      ) {
         this.queueIndexJob(file, contentHash, true);
       }
     } catch (err) {
@@ -284,7 +300,7 @@ export class IndexManager {
     if (this.isInIncludedFolders(file)) {
       try {
         const preparation = await this.filePreparation.prepare(file);
-        if (preparation.type === 'skip') {
+        if (preparation.type === "skip") {
           this.handleEmptyFile(file.path);
           return;
         }
@@ -339,7 +355,7 @@ export class IndexManager {
   async cleanupOrphans(): Promise<number> {
     const settings = this.state.getSettings();
     if (!settings.storeName) {
-      throw new Error('No store configured');
+      throw new Error("No store configured");
     }
 
     const remoteDocs = await this.gemini.listDocuments(settings.storeName);
@@ -347,7 +363,9 @@ export class IndexManager {
 
     for (const doc of remoteDocs) {
       // Check if this document is owned by us (has obsidian_path metadata)
-      const pathMeta = doc.customMetadata?.find((m: any) => m.key === 'obsidian_path');
+      const pathMeta = doc.customMetadata?.find(
+        (m: any) => m.key === "obsidian_path",
+      );
       if (!pathMeta) continue; // Not our document
 
       const vaultPath = pathMeta.stringValue;
@@ -389,17 +407,23 @@ export class IndexManager {
    *
    * Includes retry logic with exponential backoff for transient errors
    */
-  private queueIndexJob(file: TFile, contentHash: string, applyThrottle: boolean = false): void {
+  private queueIndexJob(
+    file: TFile,
+    contentHash: string,
+    applyThrottle: boolean = false,
+  ): void {
     const existingEntry = this.state.findQueueEntryByPath(file.path);
 
     // Only apply throttle if explicitly requested (for file modifications)
     // Bulk operations (reconcile, rebuild) should process immediately
-    const throttleMs = applyThrottle ? (this.state.getSettings().uploadThrottleMs ?? 0) : 0;
+    const throttleMs = applyThrottle
+      ? (this.state.getSettings().uploadThrottleMs ?? 0)
+      : 0;
     const readyAt = throttleMs > 0 ? Date.now() + throttleMs : Date.now();
     const entry: IndexQueueEntry = {
       id: existingEntry?.id ?? this.generateQueueEntryId(),
       vaultPath: file.path,
-      operation: 'upload',
+      operation: "upload",
       contentHash,
       enqueuedAt: Date.now(),
       attempts: 0,
@@ -413,7 +437,7 @@ export class IndexManager {
     }
 
     this.markPendingState(file, contentHash);
-    this.updateProgress('Queued');
+    this.updateProgress("Queued");
     this.notifyStateChange();
     this.queueManager.notifyQueueChanged();
   }
@@ -423,7 +447,7 @@ export class IndexManager {
     const entry: IndexQueueEntry = {
       id: existingEntry?.id ?? this.generateQueueEntryId(),
       vaultPath,
-      operation: 'delete',
+      operation: "delete",
       remoteId,
       enqueuedAt: Date.now(),
       attempts: 0,
@@ -436,7 +460,7 @@ export class IndexManager {
       this.stats.pending++;
     }
 
-    this.updateProgress('Queued');
+    this.updateProgress("Queued");
     this.notifyStateChange();
     this.queueManager.notifyQueueChanged();
   }
@@ -444,14 +468,16 @@ export class IndexManager {
   private async processUploadEntry(entry: IndexQueueEntry): Promise<void> {
     const abstract = this.vault.getAbstractFileByPath(entry.vaultPath);
     if (!(abstract instanceof TFile)) {
-      console.warn(`[IndexManager] File missing while processing queue: ${entry.vaultPath}`);
+      console.warn(
+        `[IndexManager] File missing while processing queue: ${entry.vaultPath}`,
+      );
       this.state.removeDocState(entry.vaultPath);
       this.notifyStateChange();
       return;
     }
 
     const preparation = await this.filePreparation.prepare(abstract);
-    if (preparation.type === 'skip') {
+    if (preparation.type === "skip") {
       this.handleEmptyFile(abstract.path);
       return;
     }
@@ -461,7 +487,7 @@ export class IndexManager {
 
   private async processDeleteEntry(entry: IndexQueueEntry): Promise<void> {
     if (!entry.remoteId) {
-      console.warn('[IndexManager] Missing remote ID for delete job, skipping');
+      console.warn("[IndexManager] Missing remote ID for delete job, skipping");
       return;
     }
 
@@ -477,8 +503,8 @@ export class IndexManager {
   private markDocError(vaultPath: string, err: Error | null): void {
     const state = this.state.getDocState(vaultPath);
     if (!state) return;
-    state.status = 'error';
-    state.errorMessage = err?.message || 'Unknown error';
+    state.status = "error";
+    state.errorMessage = err?.message || "Unknown error";
     this.state.setDocState(vaultPath, state);
     this.notifyStateChange();
   }
@@ -512,21 +538,24 @@ export class IndexManager {
     const metadata = buildDocumentMetadata(prepared);
     const existingState = this.state.getDocState(file.path);
 
-    const documentName = await this.documentReplacer.replaceDocument(existingState?.geminiDocumentName ?? null, {
-      storeName: settings.storeName,
-      content,
-      displayName: file.path,
-      metadata,
-      chunkingConfig: settings.chunkingConfig,
-      mimeType: 'text/markdown',
-    });
+    const documentName = await this.documentReplacer.replaceDocument(
+      existingState?.geminiDocumentName ?? null,
+      {
+        storeName: settings.storeName,
+        content,
+        displayName: file.path,
+        metadata,
+        chunkingConfig: settings.chunkingConfig,
+        mimeType: "text/markdown",
+      },
+    );
 
     const newState: IndexedDocState = {
       vaultPath: file.path,
       geminiDocumentName: documentName,
       contentHash,
       pathHash,
-      status: 'ready',
+      status: "ready",
       lastLocalMtime: file.stat.mtime,
       lastIndexedAt: Date.now(),
       tags,
@@ -541,7 +570,7 @@ export class IndexManager {
    */
   private getIndexableFiles(): TFile[] {
     const allFiles = this.vault.getMarkdownFiles();
-    return allFiles.filter(file => this.isInIncludedFolders(file));
+    return allFiles.filter((file) => this.isInIncludedFolders(file));
   }
 
   /**
@@ -554,8 +583,8 @@ export class IndexManager {
     if (settings.includeFolders.length === 0) return true;
 
     // Check if file path starts with any included folder
-    return settings.includeFolders.some(folder =>
-      file.path.startsWith(folder + '/') || file.path === folder
+    return settings.includeFolders.some(
+      (folder) => file.path.startsWith(folder + "/") || file.path === folder,
     );
   }
 
@@ -563,7 +592,7 @@ export class IndexManager {
    * Private: Check if file is markdown
    */
   private isMarkdownFile(file: TFile): boolean {
-    return file.extension === 'md';
+    return file.extension === "md";
   }
 
   /**
@@ -582,7 +611,7 @@ export class IndexManager {
       geminiDocumentName: existingState?.geminiDocumentName ?? null,
       contentHash,
       pathHash: existingState?.pathHash ?? computePathHash(file.path),
-      status: 'pending',
+      status: "pending",
       lastLocalMtime: file.stat.mtime,
       lastIndexedAt: existingState?.lastIndexedAt ?? 0,
       tags: existingState?.tags ?? [],
@@ -599,16 +628,16 @@ export class IndexManager {
   }
 
   private generateQueueEntryId(): string {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
       return crypto.randomUUID();
     }
     return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
   }
 
   private isNotFoundError(err: any): boolean {
-    const message = (err?.message ?? '').toLowerCase();
+    const message = (err?.message ?? "").toLowerCase();
     if (!message) return false;
-    return message.includes('404') || message.includes('not found');
+    return message.includes("404") || message.includes("not found");
   }
 
   getStats(): IndexingStats {
@@ -632,11 +661,11 @@ export class IndexManager {
 
     const pendingEntries = this.state.getQueueEntries();
     for (const entry of pendingEntries) {
-      if (entry.operation === 'upload') {
+      if (entry.operation === "upload") {
         const doc = this.state.getDocState(entry.vaultPath);
         if (doc) {
-          doc.status = 'error';
-          doc.errorMessage = 'Cleared manually from queue';
+          doc.status = "error";
+          doc.errorMessage = "Cleared manually from queue";
           this.state.setDocState(entry.vaultPath, doc);
         }
       }
@@ -644,7 +673,7 @@ export class IndexManager {
 
     this.state.clearQueue();
     this.stats.pending = 0;
-    this.updateProgress('Idle');
+    this.updateProgress("Idle");
     this.notifyStateChange();
   }
 
@@ -656,6 +685,6 @@ export class IndexManager {
       failed: 0,
       pending: 0,
     };
-    this.updateProgress('Idle');
+    this.updateProgress("Idle");
   }
 }

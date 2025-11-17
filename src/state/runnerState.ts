@@ -1,7 +1,7 @@
 // src/runner/runnerState.ts - Per-machine runner configuration (non-synced)
 
-import { App } from 'obsidian';
-import { computeVaultKey } from '../utils/vault';
+import { App } from "obsidian";
+import { computeVaultKey } from "../utils/vault";
 
 export interface RunnerState {
   isRunner: boolean;
@@ -11,7 +11,7 @@ export interface RunnerState {
 
 const DEFAULT_RUNNER_STATE: RunnerState = {
   isRunner: false,
-  deviceId: '',
+  deviceId: "",
   lastUpdated: 0,
 };
 
@@ -52,7 +52,7 @@ export class RunnerStateManager {
   }
 
   private readFromStorage(): RunnerState {
-    if (typeof window === 'undefined' || !window.localStorage) {
+    if (typeof window === "undefined" || !window.localStorage) {
       return { ...DEFAULT_RUNNER_STATE };
     }
 
@@ -62,34 +62,34 @@ export class RunnerStateManager {
         return { ...DEFAULT_RUNNER_STATE };
       }
       const parsed = JSON.parse(raw) as RunnerState;
-      if (!parsed || typeof parsed.isRunner !== 'boolean') {
+      if (!parsed || typeof parsed.isRunner !== "boolean") {
         return { ...DEFAULT_RUNNER_STATE };
       }
       return {
         isRunner: parsed.isRunner,
-        deviceId: parsed.deviceId ?? '',
+        deviceId: parsed.deviceId ?? "",
         lastUpdated: parsed.lastUpdated ?? 0,
       };
     } catch (err) {
-      console.error('[RunnerStateManager] Failed to read runner state', err);
+      console.error("[RunnerStateManager] Failed to read runner state", err);
       return { ...DEFAULT_RUNNER_STATE };
     }
   }
 
   private writeToStorage(state: RunnerState): void {
-    if (typeof window === 'undefined' || !window.localStorage) {
+    if (typeof window === "undefined" || !window.localStorage) {
       return;
     }
 
     try {
       window.localStorage.setItem(this.storageKey, JSON.stringify(state));
     } catch (err) {
-      console.error('[RunnerStateManager] Failed to persist runner state', err);
+      console.error("[RunnerStateManager] Failed to persist runner state", err);
     }
   }
 
   private generateDeviceId(): string {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
       return crypto.randomUUID();
     }
 

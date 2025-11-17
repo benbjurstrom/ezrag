@@ -1,15 +1,18 @@
 // src/mcp/server.ts - MCP server implementation (Streamable HTTP transport)
 
-import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { App } from 'obsidian';
-import { StateManager } from '../state/state';
-import { GeminiService } from '../gemini/geminiService';
-import { keywordSearch } from './tools/keywordSearch';
-import { semanticSearch } from './tools/semanticSearch';
-import { readNoteResource, listNoteResources } from './resources/noteResource';
-import express from 'express';
-import { z } from 'zod';
+import {
+  McpServer,
+  ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { App } from "obsidian";
+import { StateManager } from "../state/state";
+import { GeminiService } from "../gemini/geminiService";
+import { keywordSearch } from "./tools/keywordSearch";
+import { semanticSearch } from "./tools/semanticSearch";
+import { readNoteResource, listNoteResources } from "./resources/noteResource";
+import express from "express";
+import { z } from "zod";
 
 export interface MCPServerOptions {
   app: App;
@@ -40,8 +43,8 @@ export class MCPServer {
 
     // Create MCP server with modern API
     this.mcpServer = new McpServer({
-      name: 'ezrag-obsidian',
-      version: '1.0.0',
+      name: "ezrag-obsidian",
+      version: "1.0.0",
     });
 
     this.setupToolsAndResources();
@@ -51,172 +54,207 @@ export class MCPServer {
   private setupToolsAndResources(): void {
     // Register keywordSearch tool
     this.mcpServer.registerTool(
-      'keywordSearch',
+      "keywordSearch",
       {
-        title: 'Keyword Search',
+        title: "Keyword Search",
         description: `Search "${this.app.vault.getName()}" Obsidian vault for keyword matches. Returns file paths and matching lines with context.`,
         inputSchema: {
-          query: z.string().describe('Search query (can be a regex pattern)'),
-          caseSensitive: z.boolean().optional().default(false).describe('Whether to perform case-sensitive search'),
-          includeFolders: z.array(z.string()).optional().default([]).describe('Optional array of folder paths to search within')
+          query: z.string().describe("Search query (can be a regex pattern)"),
+          caseSensitive: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("Whether to perform case-sensitive search"),
+          includeFolders: z
+            .array(z.string())
+            .optional()
+            .default([])
+            .describe("Optional array of folder paths to search within"),
         },
         outputSchema: {
-          results: z.array(z.object({
-            path: z.string(),
-            matches: z.array(z.object({
-              line: z.number(),
-              text: z.string(),
-              before: z.string(),
-              after: z.string()
-            }))
-          }))
-        }
+          results: z.array(
+            z.object({
+              path: z.string(),
+              matches: z.array(
+                z.object({
+                  line: z.number(),
+                  text: z.string(),
+                  before: z.string(),
+                  after: z.string(),
+                }),
+              ),
+            }),
+          ),
+        },
       },
       async ({ query, caseSensitive, includeFolders }) => {
         try {
           const results = await keywordSearch(this.app, {
             query,
             caseSensitive,
-            includeFolders
+            includeFolders,
           });
 
           const output = { results };
           return {
-            content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
-            structuredContent: output as Record<string, unknown>
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(output, null, 2),
+              },
+            ],
+            structuredContent: output as Record<string, unknown>,
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           throw new Error(`Keyword search failed: ${errorMessage}`);
         }
-      }
+      },
     );
 
     // Register semanticSearch tool
     this.mcpServer.registerTool(
-      'semanticSearch',
+      "semanticSearch",
       {
-        title: 'Semantic Search',
+        title: "Semantic Search",
         description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with inline citations and references in markdown format.`,
         inputSchema: {
-          query: z.string().describe('Natural language search query'),
-          model: z.enum(['gemini-2.5-flash', 'gemini-2.5-pro']).optional().default('gemini-2.5-flash').describe('Gemini model to use')
+          query: z.string().describe("Natural language search query"),
+          model: z
+            .enum(["gemini-2.5-flash", "gemini-2.5-pro"])
+            .optional()
+            .default("gemini-2.5-flash")
+            .describe("Gemini model to use"),
         },
         outputSchema: {
-          answer: z.string()
-        }
+          answer: z.string(),
+        },
       },
       async ({ query, model }) => {
         const geminiService = this.getGeminiService();
         if (!geminiService) {
-          throw new Error('Gemini service not available. Please configure your API key in settings.');
+          throw new Error(
+            "Gemini service not available. Please configure your API key in settings.",
+          );
         }
 
         const storeName = this.stateManager.getSettings().storeName;
         if (!storeName) {
-          throw new Error('No FileSearch store configured. Please index some notes first.');
+          throw new Error(
+            "No FileSearch store configured. Please index some notes first.",
+          );
         }
 
         try {
           const markdown = await semanticSearch(geminiService, storeName, {
             query,
-            model
+            model,
           });
 
           return {
-            content: [{ type: 'text', text: markdown }]
+            content: [{ type: "text", text: markdown }],
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           throw new Error(`Semantic search failed: ${errorMessage}`);
         }
-      }
+      },
     );
 
     // Register note resource with dynamic URI template
     this.mcpServer.registerResource(
-      'note',
-      new ResourceTemplate('note:///{path}', {
+      "note",
+      new ResourceTemplate("note:///{path}", {
         list: () => {
           const includeFolders = this.stateManager.getSettings().includeFolders;
           const uris = listNoteResources(this.app, includeFolders);
           return {
-            resources: uris.map(uri => ({
-              name: uri.replace(/^note:\/\/\//, ''),
+            resources: uris.map((uri) => ({
+              name: uri.replace(/^note:\/\/\//, ""),
               uri,
-              mimeType: 'text/markdown'
-            }))
+              mimeType: "text/markdown",
+            })),
           };
-        }
+        },
       }),
       {
-        title: 'Note Content',
-        description: 'Read note content and metadata by vault path',
-        mimeType: 'text/markdown'
+        title: "Note Content",
+        description: "Read note content and metadata by vault path",
+        mimeType: "text/markdown",
       },
       async (uri, { path }) => {
         try {
-          const content = await readNoteResource(this.app, this.stateManager, uri.href);
+          const content = await readNoteResource(
+            this.app,
+            this.stateManager,
+            uri.href,
+          );
           return {
             contents: [
               {
                 uri: content.uri,
                 mimeType: content.mimeType,
-                text: content.text
-              }
-            ]
+                text: content.text,
+              },
+            ],
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           throw new Error(`Failed to read note: ${errorMessage}`);
         }
-      }
+      },
     );
   }
 
   private setupExpressEndpoint(): void {
     // Modern Streamable HTTP endpoint (stateless mode)
-    this.expressApp.post('/mcp', async (req: express.Request, res: express.Response) => {
-      try {
-        // Create new transport for each request (prevents request ID collisions)
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined, // Stateless mode
-          enableJsonResponse: true
-        });
-
-        // Cleanup transport when response closes
-        res.on('close', () => {
-          transport.close();
-        });
-
-        // Connect server to transport
-        await this.mcpServer.connect(transport);
-
-        // Handle the request
-        await transport.handleRequest(req, res, req.body);
-      } catch (error) {
-        console.error('[MCP Server] Error handling request:', error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: 'Internal server error'
-            },
-            id: null
+    this.expressApp.post(
+      "/mcp",
+      async (req: express.Request, res: express.Response) => {
+        try {
+          // Create new transport for each request (prevents request ID collisions)
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined, // Stateless mode
+            enableJsonResponse: true,
           });
+
+          // Cleanup transport when response closes
+          res.on("close", () => {
+            transport.close();
+          });
+
+          // Connect server to transport
+          await this.mcpServer.connect(transport);
+
+          // Handle the request
+          await transport.handleRequest(req, res, req.body);
+        } catch (error) {
+          console.error("[MCP Server] Error handling request:", error);
+          if (!res.headersSent) {
+            res.status(500).json({
+              jsonrpc: "2.0",
+              error: {
+                code: -32603,
+                message: "Internal server error",
+              },
+              id: null,
+            });
+          }
         }
-      }
-    });
+      },
+    );
 
     // Health check endpoint
-    this.expressApp.get('/health', (req: express.Request, res: express.Response) => {
-      res.json({
-        status: 'ok',
-        server: 'ezrag-obsidian-mcp',
-        version: '1.0.0'
-      });
-    });
+    this.expressApp.get(
+      "/health",
+      (req: express.Request, res: express.Response) => {
+        res.json({
+          status: "ok",
+          server: "ezrag-obsidian-mcp",
+          version: "1.0.0",
+        });
+      },
+    );
   }
 
   async start(): Promise<void> {
@@ -231,13 +269,13 @@ export class MCPServer {
           resolve();
         });
 
-        this.httpServer.on('error', (err: any) => {
-          console.error('[MCP Server] HTTP server error:', err);
+        this.httpServer.on("error", (err: any) => {
+          console.error("[MCP Server] HTTP server error:", err);
           this.isRunning = false;
           reject(err);
         });
       } catch (err) {
-        console.error('[MCP Server] Failed to start:', err);
+        console.error("[MCP Server] Failed to start:", err);
         reject(err);
       }
     });
@@ -264,7 +302,7 @@ export class MCPServer {
   getStatus(): { running: boolean; url: string } {
     return {
       running: this.isRunning,
-      url: this.isRunning ? `http://localhost:${this.port}/mcp` : ''
+      url: this.isRunning ? `http://localhost:${this.port}/mcp` : "",
     };
   }
 }

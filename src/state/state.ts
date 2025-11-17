@@ -1,6 +1,12 @@
 // src/state/state.ts - Obsidian-agnostic state management
 
-import { PersistedData, PluginSettings, IndexedDocState, DEFAULT_DATA, IndexQueueEntry } from '../types';
+import {
+  PersistedData,
+  PluginSettings,
+  IndexedDocState,
+  DEFAULT_DATA,
+  IndexQueueEntry,
+} from "../types";
 
 export class StateManager {
   private data: PersistedData;
@@ -16,7 +22,10 @@ export class StateManager {
 
       if (initialData.index) {
         if (initialData.index.docs) {
-          base.index.docs = { ...base.index.docs, ...initialData.index.docs };
+          base.index.docs = {
+            ...base.index.docs,
+            ...initialData.index.docs,
+          };
         }
         if (initialData.index.queue) {
           base.index.queue = [...initialData.index.queue];
@@ -63,18 +72,24 @@ export class StateManager {
   }
 
   addOrUpdateQueueEntry(entry: IndexQueueEntry): void {
-    const filtered = this.data.index.queue.filter((existing) => existing.vaultPath !== entry.vaultPath);
+    const filtered = this.data.index.queue.filter(
+      (existing) => existing.vaultPath !== entry.vaultPath,
+    );
     filtered.push(entry);
     this.data.index.queue = filtered;
   }
 
   removeQueueEntry(entryId: string): void {
-    this.data.index.queue = this.data.index.queue.filter((entry) => entry.id !== entryId);
+    this.data.index.queue = this.data.index.queue.filter(
+      (entry) => entry.id !== entryId,
+    );
   }
 
   removeQueueEntriesByPath(vaultPath: string): number {
     const before = this.data.index.queue.length;
-    this.data.index.queue = this.data.index.queue.filter((entry) => entry.vaultPath !== vaultPath);
+    this.data.index.queue = this.data.index.queue.filter(
+      (entry) => entry.vaultPath !== vaultPath,
+    );
     return before - this.data.index.queue.length;
   }
 
@@ -88,7 +103,7 @@ export class StateManager {
 
   updateQueueEntry(entryId: string, updates: Partial<IndexQueueEntry>): void {
     this.data.index.queue = this.data.index.queue.map((entry) =>
-      entry.id === entryId ? { ...entry, ...updates } : entry
+      entry.id === entryId ? { ...entry, ...updates } : entry,
     );
   }
 
@@ -103,7 +118,7 @@ export class StateManager {
   exportSettings(): { version: number; settings: PluginSettings } {
     return {
       version: this.data.version,
-      settings: structuredClone(this.data.settings)
+      settings: structuredClone(this.data.settings),
     };
   }
 
@@ -111,10 +126,13 @@ export class StateManager {
    * Export index state for localStorage persistence.
    * Returns only docs and queue (device-specific data).
    */
-  exportIndexState(): { docs: Record<string, IndexedDocState>; queue: IndexQueueEntry[] } {
+  exportIndexState(): {
+    docs: Record<string, IndexedDocState>;
+    queue: IndexQueueEntry[];
+  } {
     return {
       docs: structuredClone(this.data.index.docs),
-      queue: structuredClone(this.data.index.queue)
+      queue: structuredClone(this.data.index.queue),
     };
   }
 

@@ -1,11 +1,17 @@
 // src/ui/chatView.ts - Mobile-first chat interface using Obsidian design system
 
-import { ItemView, Notice, WorkspaceLeaf, setIcon, MarkdownRenderer } from 'obsidian';
-import type EzRAGPlugin from '../../main';
-import { ChatMessage, ChatModel } from '../types';
-import { annotateForChat } from '../utils/citations';
+import {
+  ItemView,
+  Notice,
+  WorkspaceLeaf,
+  setIcon,
+  MarkdownRenderer,
+} from "obsidian";
+import type EzRAGPlugin from "../../main";
+import { ChatMessage, ChatModel } from "../types";
+import { annotateForChat } from "../utils/citations";
 
-export const CHAT_VIEW_TYPE = 'ezrag-chat-view';
+export const CHAT_VIEW_TYPE = "ezrag-chat-view";
 
 export class ChatView extends ItemView {
   private readonly plugin: EzRAGPlugin;
@@ -17,7 +23,7 @@ export class ChatView extends ItemView {
   private inputContainer!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendButton!: HTMLButtonElement;
-  private model: ChatModel = 'gemini-2.5-flash';
+  private model: ChatModel = "gemini-2.5-flash";
   private modelSwitcher!: HTMLElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: EzRAGPlugin) {
@@ -30,11 +36,11 @@ export class ChatView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Chat';
+    return "Chat";
   }
 
   getIcon(): string {
-    return 'message-square';
+    return "message-square";
   }
 
   async onOpen(): Promise<void> {
@@ -50,84 +56,87 @@ export class ChatView extends ItemView {
   private buildLayout(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass('ezrag-chat-view');
+    contentEl.addClass("ezrag-chat-view");
 
     // Header section with vault name and status
-    this.headerEl = contentEl.createDiv('ezrag-chat-header');
-    this.headerEl.createEl('div', { cls: 'ezrag-chat-title' });
-    this.statusEl = this.headerEl.createEl('div', { cls: 'ezrag-chat-status' });
+    this.headerEl = contentEl.createDiv("ezrag-chat-header");
+    this.headerEl.createEl("div", { cls: "ezrag-chat-title" });
+    this.statusEl = this.headerEl.createEl("div", {
+      cls: "ezrag-chat-status",
+    });
 
     // Action bar with model switcher and new chat
-    const actionBar = contentEl.createDiv('ezrag-chat-actions');
+    const actionBar = contentEl.createDiv("ezrag-chat-actions");
 
     // Model switcher (compact for mobile)
-    this.modelSwitcher = actionBar.createDiv('ezrag-chat-model-switcher');
+    this.modelSwitcher = actionBar.createDiv("ezrag-chat-model-switcher");
     this.buildModelSwitcher();
 
     // New chat button
-    const newChatBtn = actionBar.createEl('button', {
-      cls: 'ezrag-new-chat-btn',
-      attr: { 'aria-label': 'New chat' }
+    const newChatBtn = actionBar.createEl("button", {
+      cls: "ezrag-new-chat-btn",
+      attr: { "aria-label": "New chat" },
     });
-    setIcon(newChatBtn, 'file-plus');
-    newChatBtn.addEventListener('click', () => this.resetChat());
+    setIcon(newChatBtn, "file-plus");
+    newChatBtn.addEventListener("click", () => this.resetChat());
 
     // Messages area (scrollable)
-    this.historyEl = contentEl.createDiv('ezrag-chat-messages');
+    this.historyEl = contentEl.createDiv("ezrag-chat-messages");
 
     // Input area (fixed at bottom)
-    this.inputContainer = contentEl.createDiv('ezrag-chat-input-container');
+    this.inputContainer = contentEl.createDiv("ezrag-chat-input-container");
 
     // Textarea for multi-line input
-    this.inputEl = this.inputContainer.createEl('textarea', {
-      cls: 'ezrag-chat-input',
+    this.inputEl = this.inputContainer.createEl("textarea", {
+      cls: "ezrag-chat-input",
       attr: {
-        placeholder: 'Ask about your notes...',
-        rows: '1'
-      }
+        placeholder: "Ask about your notes...",
+        rows: "1",
+      },
     }) as HTMLTextAreaElement;
 
     // Auto-resize textarea as user types
-    this.inputEl.addEventListener('input', () => {
-      this.inputEl.style.height = 'auto';
-      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+    this.inputEl.addEventListener("input", () => {
+      this.inputEl.style.height = "auto";
+      this.inputEl.style.height =
+        Math.min(this.inputEl.scrollHeight, 120) + "px";
     });
 
-    this.inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+    this.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this.handleSubmit();
       }
     });
 
     // Send button
-    this.sendButton = this.inputContainer.createEl('button', {
-      cls: 'ezrag-chat-send',
-      attr: { 'aria-label': 'Send message' }
+    this.sendButton = this.inputContainer.createEl("button", {
+      cls: "ezrag-chat-send",
+      attr: { "aria-label": "Send message" },
     });
-    setIcon(this.sendButton, 'send');
-    this.sendButton.addEventListener('click', () => this.handleSubmit());
+    setIcon(this.sendButton, "send");
+    this.sendButton.addEventListener("click", () => this.handleSubmit());
   }
 
   private buildModelSwitcher(): void {
     this.modelSwitcher.empty();
 
-    const select = this.modelSwitcher.createEl('select', {
-      cls: 'dropdown'
+    const select = this.modelSwitcher.createEl("select", {
+      cls: "dropdown",
     }) as HTMLSelectElement;
 
-    select.createEl('option', {
-      value: 'gemini-2.5-flash',
-      text: 'gemini-2.5-flash'
+    select.createEl("option", {
+      value: "gemini-2.5-flash",
+      text: "gemini-2.5-flash",
     });
 
-    select.createEl('option', {
-      value: 'gemini-2.5-pro',
-      text: 'gemini-2.5-pro'
+    select.createEl("option", {
+      value: "gemini-2.5-pro",
+      text: "gemini-2.5-pro",
     });
 
     select.value = this.model;
-    select.addEventListener('change', () => {
+    select.addEventListener("change", () => {
       this.model = select.value as ChatModel;
     });
   }
@@ -137,14 +146,15 @@ export class ChatView extends ItemView {
     if (!settings.apiKey) {
       return {
         ready: false,
-        message: 'Add your Gemini API key in settings to start chatting.'
+        message: "Add your Gemini API key in settings to start chatting.",
       };
     }
     const connectionState = this.plugin.getConnectionState();
     if (!connectionState.connected) {
       const message = connectionState.online
-        ? (connectionState.apiKeyError ?? 'Validate your API key in settings to enable chat.')
-        : 'Connect to the internet to use chat.';
+        ? (connectionState.apiKeyError ??
+          "Validate your API key in settings to enable chat.")
+        : "Connect to the internet to use chat.";
       return {
         ready: false,
         message,
@@ -153,7 +163,7 @@ export class ChatView extends ItemView {
     if (!settings.storeName) {
       return {
         ready: false,
-        message: 'Enable indexing on a desktop device to start chatting.',
+        message: "Enable indexing on a desktop device to start chatting.",
       };
     }
     return { ready: true };
@@ -162,17 +172,19 @@ export class ChatView extends ItemView {
   private updateHeader(): void {
     const vaultName = this.app.vault.getName();
 
-    this.headerEl.querySelector('.ezrag-chat-title')?.setText(`Chat with ${vaultName}`);
+    this.headerEl
+      .querySelector(".ezrag-chat-title")
+      ?.setText(`Chat with ${vaultName}`);
 
     const readiness = this.getReadiness();
     if (readiness.ready) {
-      this.statusEl.setText('Connected');
-      this.statusEl.removeClass('is-disabled');
+      this.statusEl.setText("Connected");
+      this.statusEl.removeClass("is-disabled");
       this.inputEl.disabled = this.isLoading;
       this.sendButton.disabled = this.isLoading;
     } else {
-      this.statusEl.setText('Unavailable');
-      this.statusEl.addClass('is-disabled');
+      this.statusEl.setText("Unavailable");
+      this.statusEl.addClass("is-disabled");
       this.inputEl.disabled = true;
       this.sendButton.disabled = true;
     }
@@ -183,18 +195,20 @@ export class ChatView extends ItemView {
     const readiness = this.getReadiness();
 
     if (!readiness.ready) {
-      const emptyState = this.historyEl.createDiv('ezrag-empty-state');
-      const icon = emptyState.createDiv('ezrag-empty-icon');
-      setIcon(icon, 'message-square');
-      emptyState.createEl('p', { text: readiness.message });
+      const emptyState = this.historyEl.createDiv("ezrag-empty-state");
+      const icon = emptyState.createDiv("ezrag-empty-icon");
+      setIcon(icon, "message-square");
+      emptyState.createEl("p", { text: readiness.message });
       return;
     }
 
     if (this.messages.length === 0 && !this.isLoading) {
-      const emptyState = this.historyEl.createDiv('ezrag-empty-state');
-      const icon = emptyState.createDiv('ezrag-empty-icon');
-      setIcon(icon, 'sparkles');
-      emptyState.createEl('p', { text: 'Ask a question about your notes to get started.' });
+      const emptyState = this.historyEl.createDiv("ezrag-empty-state");
+      const icon = emptyState.createDiv("ezrag-empty-icon");
+      setIcon(icon, "sparkles");
+      emptyState.createEl("p", {
+        text: "Ask a question about your notes to get started.",
+      });
       return;
     }
 
@@ -203,12 +217,14 @@ export class ChatView extends ItemView {
     }
 
     if (this.isLoading) {
-      const loadingBubble = this.historyEl.createDiv('ezrag-message-row is-assistant');
-      const bubble = loadingBubble.createDiv('ezrag-message-bubble');
-      const spinner = bubble.createDiv('ezrag-loading');
-      spinner.createDiv('ezrag-loading-dot');
-      spinner.createDiv('ezrag-loading-dot');
-      spinner.createDiv('ezrag-loading-dot');
+      const loadingBubble = this.historyEl.createDiv(
+        "ezrag-message-row is-assistant",
+      );
+      const bubble = loadingBubble.createDiv("ezrag-message-bubble");
+      const spinner = bubble.createDiv("ezrag-loading");
+      spinner.createDiv("ezrag-loading-dot");
+      spinner.createDiv("ezrag-loading-dot");
+      spinner.createDiv("ezrag-loading-dot");
     }
 
     // Scroll to bottom
@@ -216,19 +232,23 @@ export class ChatView extends ItemView {
   }
 
   private renderMessageBubble(message: ChatMessage): HTMLElement {
-    const row = document.createElement('div');
-    row.addClass('ezrag-message-row');
-    row.addClass(message.role === 'user' ? 'is-user' : 'is-assistant');
+    const row = document.createElement("div");
+    row.addClass("ezrag-message-row");
+    row.addClass(message.role === "user" ? "is-user" : "is-assistant");
 
-    const bubble = row.createDiv('ezrag-message-bubble');
-    const content = bubble.createDiv('ezrag-message-content');
+    const bubble = row.createDiv("ezrag-message-bubble");
+    const content = bubble.createDiv("ezrag-message-content");
 
     // For model messages with grounding, annotate with citations
-    if (message.role === 'model' && message.groundingSupports && message.groundingSupports.length > 0) {
+    if (
+      message.role === "model" &&
+      message.groundingSupports &&
+      message.groundingSupports.length > 0
+    ) {
       const { annotatedText, fileReferences } = annotateForChat(
         message.text,
         message.groundingSupports,
-        message.groundingChunks || []
+        message.groundingChunks || [],
       );
 
       this.renderMarkdownInto(content, annotatedText, () => {
@@ -236,18 +256,18 @@ export class ChatView extends ItemView {
       });
 
       // Add click handler for citations (event delegation)
-      content.addEventListener('click', (e) => {
+      content.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
-        if (target.classList.contains('ezrag-citation')) {
-          const filesAttr = target.getAttribute('data-files');
+        if (target.classList.contains("ezrag-citation")) {
+          const filesAttr = target.getAttribute("data-files");
           if (filesAttr) {
-            const files = filesAttr.split('|');
+            const files = filesAttr.split("|");
             // Open the first file (or all files if multiple)
             if (files.length === 1) {
-              this.app.workspace.openLinkText(files[0], '', false);
+              this.app.workspace.openLinkText(files[0], "", false);
             } else {
               // Multiple files: open first one (could be enhanced to show a menu)
-              this.app.workspace.openLinkText(files[0], '', false);
+              this.app.workspace.openLinkText(files[0], "", false);
             }
           }
         }
@@ -264,14 +284,24 @@ export class ChatView extends ItemView {
     return row;
   }
 
-  private renderMarkdownInto(target: HTMLElement, markdown: string, afterRender?: () => void): void {
+  private renderMarkdownInto(
+    target: HTMLElement,
+    markdown: string,
+    afterRender?: () => void,
+  ): void {
     target.empty();
-    const sourcePath = this.app.workspace.getActiveFile()?.path ?? 'ezrag-chat.md';
-    const promise = MarkdownRenderer.renderMarkdown(markdown || '', target, sourcePath, this);
+    const sourcePath =
+      this.app.workspace.getActiveFile()?.path ?? "ezrag-chat.md";
+    const promise = MarkdownRenderer.renderMarkdown(
+      markdown || "",
+      target,
+      sourcePath,
+      this,
+    );
     promise
       .then(() => afterRender?.())
       .catch((err) => {
-        console.error('[EzRAG] Failed to render chat markdown', err);
+        console.error("[EzRAG] Failed to render chat markdown", err);
         target.setText(markdown);
       });
   }
@@ -282,7 +312,7 @@ export class ChatView extends ItemView {
     const nodes: Text[] = [];
     let currentNode = walker.nextNode();
     while (currentNode) {
-      if (regex.test(currentNode.nodeValue ?? '')) {
+      if (regex.test(currentNode.nodeValue ?? "")) {
         nodes.push(currentNode as Text);
       }
       regex.lastIndex = 0;
@@ -290,7 +320,7 @@ export class ChatView extends ItemView {
     }
 
     for (const textNode of nodes) {
-      const text = textNode.nodeValue ?? '';
+      const text = textNode.nodeValue ?? "";
       const fragment = document.createDocumentFragment();
       let lastIndex = 0;
       regex.lastIndex = 0;
@@ -298,7 +328,9 @@ export class ChatView extends ItemView {
 
       while ((match = regex.exec(text)) !== null) {
         if (match.index > lastIndex) {
-          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+          fragment.appendChild(
+            document.createTextNode(text.slice(lastIndex, match.index)),
+          );
         }
         fragment.appendChild(this.createCitationElement(match[1], match[2]));
         lastIndex = match.index + match[0].length;
@@ -313,11 +345,11 @@ export class ChatView extends ItemView {
   }
 
   private createCitationElement(nums: string, files: string): HTMLElement {
-    const sup = document.createElement('sup');
-    sup.addClass('ezrag-citation');
-    sup.setAttribute('data-files', files);
-    const fileArray = files.split('|');
-    sup.setAttribute('title', `Click to open: ${fileArray.join(', ')}`);
+    const sup = document.createElement("sup");
+    sup.addClass("ezrag-citation");
+    sup.setAttribute("data-files", files);
+    const fileArray = files.split("|");
+    sup.setAttribute("title", `Click to open: ${fileArray.join(", ")}`);
     sup.setText(`[${nums}]`);
     return sup;
   }
@@ -327,49 +359,53 @@ export class ChatView extends ItemView {
     if (!value || this.isLoading) {
       return;
     }
-    this.inputEl.value = '';
-    this.inputEl.style.height = 'auto';
+    this.inputEl.value = "";
+    this.inputEl.style.height = "auto";
     void this.sendMessage(value);
   }
 
   private async sendMessage(prompt: string): Promise<void> {
     const readiness = this.getReadiness();
     if (!readiness.ready) {
-      new Notice(readiness.message ?? 'Chat is not ready yet.');
+      new Notice(readiness.message ?? "Chat is not ready yet.");
       return;
     }
 
     if (!this.plugin.isConnected()) {
-      new Notice('Gemini is offline. Check your connection and API key.');
+      new Notice("Gemini is offline. Check your connection and API key.");
       return;
     }
 
     const service = this.plugin.getGeminiService();
     const settings = this.plugin.stateManager.getSettings();
     if (!service || !settings.storeName) {
-      new Notice('Gemini is not configured yet.');
+      new Notice("Gemini is not configured yet.");
       return;
     }
 
-    this.messages.push({ role: 'user', text: prompt });
+    this.messages.push({ role: "user", text: prompt });
     this.isLoading = true;
     this.updateHeader();
     this.renderMessages();
 
     try {
-      const result = await service.fileSearch(settings.storeName, prompt, this.model);
+      const result = await service.fileSearch(
+        settings.storeName,
+        prompt,
+        this.model,
+      );
       this.messages.push({
-        role: 'model',
-        text: result.text || 'No response returned.',
+        role: "model",
+        text: result.text || "No response returned.",
         groundingChunks: result.groundingChunks || [],
         groundingSupports: result.groundingSupports || [],
       });
     } catch (err) {
-      console.error('[EzRAG] Chat query failed', err);
-      new Notice('Failed to run the query. Check the console for details.');
+      console.error("[EzRAG] Chat query failed", err);
+      new Notice("Failed to run the query. Check the console for details.");
       this.messages.push({
-        role: 'model',
-        text: 'Sorry, something went wrong while running that query.',
+        role: "model",
+        text: "Sorry, something went wrong while running that query.",
       });
     } finally {
       this.isLoading = false;
@@ -383,25 +419,27 @@ export class ChatView extends ItemView {
    */
   private renderReferences(
     container: HTMLElement,
-    fileReferences: Map<string, number>
+    fileReferences: Map<string, number>,
   ): void {
     if (fileReferences.size === 0) return;
 
     // Sort by reference number
-    const sortedRefs = Array.from(fileReferences.entries()).sort((a, b) => a[1] - b[1]);
+    const sortedRefs = Array.from(fileReferences.entries()).sort(
+      (a, b) => a[1] - b[1],
+    );
 
-    const refsList = container.createEl('ol', { cls: 'ezrag-references' });
+    const refsList = container.createEl("ol", { cls: "ezrag-references" });
 
     for (const [filePath, refNum] of sortedRefs) {
-      const li = refsList.createEl('li');
-      const link = li.createEl('a', {
+      const li = refsList.createEl("li");
+      const link = li.createEl("a", {
         text: filePath,
-        cls: 'ezrag-reference-link'
+        cls: "ezrag-reference-link",
       });
 
-      link.addEventListener('click', (e) => {
+      link.addEventListener("click", (e) => {
         e.preventDefault();
-        this.app.workspace.openLinkText(filePath, '', false);
+        this.app.workspace.openLinkText(filePath, "", false);
       });
     }
   }

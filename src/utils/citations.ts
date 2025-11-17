@@ -17,7 +17,7 @@ export interface AnnotationResult {
  */
 export function buildCitationData(
   groundingSupports: any[],
-  groundingChunks: any[]
+  groundingChunks: any[],
 ): AnnotationResult {
   const fileReferences = new Map<string, number>();
 
@@ -68,11 +68,11 @@ export function buildCitationData(
   positionMap.forEach((refNums, position) => {
     const citationNumbers = Array.from(refNums).sort((a, b) => a - b);
     const fileNames = citationNumbers
-      .map(num => {
+      .map((num) => {
         for (const [path, refNum] of fileReferences.entries()) {
           if (refNum === num) return path;
         }
-        return '';
+        return "";
       })
       .filter(Boolean);
 
@@ -89,11 +89,11 @@ export function buildCitationData(
 export function insertCitations(
   text: string,
   citations: CitationData[],
-  formatFn: (citationNumbers: number[], fileNames: string[]) => string
+  formatFn: (citationNumbers: number[], fileNames: string[]) => string,
 ): string {
-  const insertions = citations.map(c => ({
+  const insertions = citations.map((c) => ({
     position: c.position,
-    text: formatFn(c.citationNumbers, c.fileNames)
+    text: formatFn(c.citationNumbers, c.fileNames),
   }));
 
   // Sort in reverse order to preserve indices
@@ -112,26 +112,33 @@ export function insertCitations(
 /**
  * Format citations for chat (HTML placeholders that will be replaced later)
  */
-export function formatForChat(citationNumbers: number[], fileNames: string[]): string {
-  return `{{CITATION:${citationNumbers.join(',')}:${fileNames.join('|')}}}`;
+export function formatForChat(
+  citationNumbers: number[],
+  fileNames: string[],
+): string {
+  return `{{CITATION:${citationNumbers.join(",")}:${fileNames.join("|")}}}`;
 }
 
 /**
  * Format citations for markdown (plain text, no HTML)
  */
 export function formatForMarkdown(citationNumbers: number[]): string {
-  return `[${citationNumbers.join(',')}]`;
+  return `[${citationNumbers.join(",")}]`;
 }
 
 /**
  * Build markdown reference list
  */
-export function buildReferenceList(fileReferences: Map<string, number>): string {
-  if (fileReferences.size === 0) return '';
+export function buildReferenceList(
+  fileReferences: Map<string, number>,
+): string {
+  if (fileReferences.size === 0) return "";
 
-  const sortedRefs = Array.from(fileReferences.entries()).sort((a, b) => a[1] - b[1]);
+  const sortedRefs = Array.from(fileReferences.entries()).sort(
+    (a, b) => a[1] - b[1],
+  );
 
-  let refs = '\n\n';
+  let refs = "\n\n";
   for (const [path, num] of sortedRefs) {
     refs += `${num}. ${path}\n`;
   }
@@ -145,15 +152,20 @@ export function buildReferenceList(fileReferences: Map<string, number>): string 
 export function annotateForMarkdown(
   text: string,
   groundingSupports: any[],
-  groundingChunks: any[]
+  groundingChunks: any[],
 ): string {
-  const { fileReferences, citations } = buildCitationData(groundingSupports, groundingChunks);
+  const { fileReferences, citations } = buildCitationData(
+    groundingSupports,
+    groundingChunks,
+  );
 
   if (citations.length === 0) {
     return text;
   }
 
-  const annotated = insertCitations(text, citations, (nums) => formatForMarkdown(nums));
+  const annotated = insertCitations(text, citations, (nums) =>
+    formatForMarkdown(nums),
+  );
 
   return annotated + buildReferenceList(fileReferences);
 }
@@ -164,16 +176,19 @@ export function annotateForMarkdown(
 export function annotateForChat(
   text: string,
   groundingSupports: any[],
-  groundingChunks: any[]
+  groundingChunks: any[],
 ): { annotatedText: string; fileReferences: Map<string, number> } {
-  const { fileReferences, citations } = buildCitationData(groundingSupports, groundingChunks);
+  const { fileReferences, citations } = buildCitationData(
+    groundingSupports,
+    groundingChunks,
+  );
 
   if (citations.length === 0) {
     return { annotatedText: text, fileReferences };
   }
 
   const annotatedText = insertCitations(text, citations, (nums, files) =>
-    formatForChat(nums, files)
+    formatForChat(nums, files),
   );
 
   return { annotatedText, fileReferences };

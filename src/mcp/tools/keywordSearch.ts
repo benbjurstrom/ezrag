@@ -1,6 +1,6 @@
 // src/mcp/tools/keywordSearch.ts - Keyword search tool for MCP
 
-import { App, TFile } from 'obsidian';
+import { App, TFile } from "obsidian";
 
 export interface KeywordSearchParams {
   query: string;
@@ -26,12 +26,12 @@ export interface KeywordSearchResult {
  */
 export async function keywordSearch(
   app: App,
-  params: KeywordSearchParams
+  params: KeywordSearchParams,
 ): Promise<KeywordSearchResult[]> {
   const { query, caseSensitive = false, includeFolders = [] } = params;
 
   if (!query || query.trim().length === 0) {
-    throw new Error('Query parameter is required and cannot be empty');
+    throw new Error("Query parameter is required and cannot be empty");
   }
 
   const results: KeywordSearchResult[] = [];
@@ -40,18 +40,21 @@ export async function keywordSearch(
   const files = app.vault.getMarkdownFiles();
 
   // Filter by folders if specified
-  const filteredFiles = includeFolders.length > 0
-    ? files.filter(file => {
-        return includeFolders.some(folder => {
-          const normalizedFolder = folder.trim().replace(/^\/+|\/+$/g, '');
-          return file.path.startsWith(normalizedFolder + '/') ||
-                 file.path === normalizedFolder;
-        });
-      })
-    : files;
+  const filteredFiles =
+    includeFolders.length > 0
+      ? files.filter((file) => {
+          return includeFolders.some((folder) => {
+            const normalizedFolder = folder.trim().replace(/^\/+|\/+$/g, "");
+            return (
+              file.path.startsWith(normalizedFolder + "/") ||
+              file.path === normalizedFolder
+            );
+          });
+        })
+      : files;
 
   // Build search regex
-  const flags = caseSensitive ? 'g' : 'gi';
+  const flags = caseSensitive ? "g" : "gi";
   let searchRegex: RegExp;
   try {
     searchRegex = new RegExp(query, flags);
@@ -63,7 +66,7 @@ export async function keywordSearch(
   for (const file of filteredFiles) {
     try {
       const content = await app.vault.cachedRead(file);
-      const lines = content.split('\n');
+      const lines = content.split("\n");
       const matches: KeywordSearchMatch[] = [];
 
       lines.forEach((line, index) => {
@@ -75,13 +78,16 @@ export async function keywordSearch(
 
           // Get context (2 lines before and after)
           const beforeLines = lines.slice(Math.max(0, index - 2), index);
-          const afterLines = lines.slice(index + 1, Math.min(lines.length, index + 3));
+          const afterLines = lines.slice(
+            index + 1,
+            Math.min(lines.length, index + 3),
+          );
 
           matches.push({
             line: lineNumber,
             text: line,
-            before: beforeLines.join('\n'),
-            after: afterLines.join('\n')
+            before: beforeLines.join("\n"),
+            after: afterLines.join("\n"),
           });
         }
       });
@@ -89,11 +95,14 @@ export async function keywordSearch(
       if (matches.length > 0) {
         results.push({
           path: file.path,
-          matches
+          matches,
         });
       }
     } catch (err) {
-      console.error(`[MCP KeywordSearch] Failed to search file ${file.path}:`, err);
+      console.error(
+        `[MCP KeywordSearch] Failed to search file ${file.path}:`,
+        err,
+      );
       // Continue with other files
     }
   }

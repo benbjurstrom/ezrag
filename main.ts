@@ -1,20 +1,26 @@
 // main.ts - Plugin entry point
 
-import { Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
-import { StateManager } from './src/state/state';
-import { DEFAULT_DATA } from './src/types';
-import { GeminiService } from './src/gemini/geminiService';
-import { IndexingController, IndexingPhase } from './src/indexing/indexingController';
-import { RunnerStateManager } from './src/state/runnerState';
-import { IndexStateStorageManager } from './src/state/indexState';
-import { JanitorProgressModal } from './src/ui/janitorProgressModal';
-import { EzRAGSettingTab } from './src/ui/settingsTab';
-import { IndexingStatusModal } from './src/ui/indexingStatusModal';
-import { StoreManager } from './src/gemini/storeManager';
-import { ChatView, CHAT_VIEW_TYPE } from './src/ui/chatView';
-import { ConnectionManager, ConnectionState } from './src/connection/connectionManager';
-import { LifecycleCoordinator } from './src/indexing/lifecycleCoordinator';
-import { MCPServer } from './src/mcp/server';
+import { Modal, Platform, Plugin, TFile, Notice } from "obsidian";
+import { StateManager } from "./src/state/state";
+import { DEFAULT_DATA } from "./src/types";
+import { GeminiService } from "./src/gemini/geminiService";
+import {
+  IndexingController,
+  IndexingPhase,
+} from "./src/indexing/indexingController";
+import { RunnerStateManager } from "./src/state/runnerState";
+import { IndexStateStorageManager } from "./src/state/indexState";
+import { JanitorProgressModal } from "./src/ui/janitorProgressModal";
+import { EzRAGSettingTab } from "./src/ui/settingsTab";
+import { IndexingStatusModal } from "./src/ui/indexingStatusModal";
+import { StoreManager } from "./src/gemini/storeManager";
+import { ChatView, CHAT_VIEW_TYPE } from "./src/ui/chatView";
+import {
+  ConnectionManager,
+  ConnectionState,
+} from "./src/connection/connectionManager";
+import { LifecycleCoordinator } from "./src/indexing/lifecycleCoordinator";
+import { MCPServer } from "./src/mcp/server";
 
 export default class EzRAGPlugin extends Plugin {
   stateManager!: StateManager;
@@ -31,7 +37,10 @@ export default class EzRAGPlugin extends Plugin {
 
   async onload() {
     // Initialize localStorage manager for index/queue data (device-specific, non-synced)
-    this.indexStateStorage = new IndexStateStorageManager(this.app, this.manifest.id);
+    this.indexStateStorage = new IndexStateStorageManager(
+      this.app,
+      this.manifest.id,
+    );
 
     // Load settings from data.json (synced across devices)
     const savedData = await this.loadData();
@@ -47,12 +56,12 @@ export default class EzRAGPlugin extends Plugin {
         ...savedData.settings,
         chunkingConfig: {
           ...DEFAULT_DATA.settings.chunkingConfig,
-          ...(savedData.settings.chunkingConfig || {})
+          ...(savedData.settings.chunkingConfig || {}),
         },
         mcpServer: {
           ...DEFAULT_DATA.settings.mcpServer,
-          ...(savedData.settings.mcpServer || {})
-        }
+          ...(savedData.settings.mcpServer || {}),
+        },
       };
     }
 
@@ -60,7 +69,7 @@ export default class EzRAGPlugin extends Plugin {
     this.stateManager = new StateManager({
       version: savedData?.version ?? DEFAULT_DATA.version,
       settings: mergedSettings,
-      index: indexState
+      index: indexState,
     });
 
     // Initialize connection manager
@@ -109,7 +118,9 @@ export default class EzRAGPlugin extends Plugin {
       },
     });
 
-    this.lifecycleCoordinator.handleConnectionChange(this.connectionManager.getState());
+    this.lifecycleCoordinator.handleConnectionChange(
+      this.connectionManager.getState(),
+    );
 
     // FIRST-RUN ONBOARDING: Check if API key is set
     const settings = this.stateManager.getSettings();
@@ -122,15 +133,18 @@ export default class EzRAGPlugin extends Plugin {
     this.addSettingTab(new EzRAGSettingTab(this.app, this));
 
     // Add ribbon icon for chat
-    this.addRibbonIcon('message-square', 'Open Chat', () => {
+    this.addRibbonIcon("message-square", "Open Chat", () => {
       void this.openChatInterface();
     });
 
     // Add status bar + subscribe to controller updates
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.style.cursor = 'pointer';
-    this.statusBarItem.setAttribute('aria-label', 'Click to open queue or settings');
-    this.statusBarItem.addEventListener('click', () => {
+    this.statusBarItem.style.cursor = "pointer";
+    this.statusBarItem.setAttribute(
+      "aria-label",
+      "Click to open queue or settings",
+    );
+    this.statusBarItem.addEventListener("click", () => {
       if (Platform.isDesktopApp && this.runnerManager?.isRunner()) {
         // Runner is active - open queue modal
         this.openIndexingStatusModal();
@@ -145,44 +159,44 @@ export default class EzRAGPlugin extends Plugin {
     // Register vault events after layout is ready to avoid processing existing files on startup
     this.app.workspace.onLayoutReady(() => {
       this.registerEvent(
-        this.app.vault.on('create', (file) => {
+        this.app.vault.on("create", (file) => {
           if (file instanceof TFile) {
             this.indexingController?.handleFileCreated(file);
           }
-        })
+        }),
       );
 
       this.registerEvent(
-        this.app.vault.on('modify', (file) => {
+        this.app.vault.on("modify", (file) => {
           if (file instanceof TFile) {
             this.indexingController?.handleFileModified(file);
           }
-        })
+        }),
       );
 
       this.registerEvent(
-        this.app.vault.on('rename', (file, oldPath) => {
+        this.app.vault.on("rename", (file, oldPath) => {
           if (file instanceof TFile) {
             this.indexingController?.handleFileRenamed(file, oldPath);
           }
-        })
+        }),
       );
 
       this.registerEvent(
-        this.app.vault.on('delete', (file) => {
+        this.app.vault.on("delete", (file) => {
           if (file instanceof TFile) {
             this.indexingController?.handleFileDeleted(file.path);
           }
-        })
+        }),
       );
 
-      void this.refreshIndexingState('startup');
+      void this.refreshIndexingState("startup");
     });
 
     // Add commands (only available if runner)
     this.addCommand({
-      id: 'rebuild-index',
-      name: 'Rebuild Index',
+      id: "rebuild-index",
+      name: "Rebuild Index",
       checkCallback: (checking) => {
         if (!this.runnerManager?.isRunner()) return false;
         if (!checking) this.rebuildIndex();
@@ -191,8 +205,8 @@ export default class EzRAGPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: 'cleanup-orphans',
-      name: 'Cleanup Orphaned Documents',
+      id: "cleanup-orphans",
+      name: "Cleanup Orphaned Documents",
       checkCallback: (checking) => {
         if (!this.runnerManager?.isRunner()) return false;
         if (!checking) this.cleanupOrphans();
@@ -201,8 +215,8 @@ export default class EzRAGPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: 'run-janitor',
-      name: 'Clean Up Remote Index',
+      id: "run-janitor",
+      name: "Clean Up Remote Index",
       checkCallback: (checking) => {
         if (!this.runnerManager?.isRunner()) return false;
         if (!checking) this.runJanitorWithUI();
@@ -211,11 +225,11 @@ export default class EzRAGPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: 'open-ezrag-chat',
-      name: 'Open Chat Interface',
+      id: "open-ezrag-chat",
+      name: "Open Chat Interface",
       callback: () => {
         void this.openChatInterface();
-      }
+      },
     });
 
     // Start MCP server if enabled
@@ -226,7 +240,6 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   onunload() {
-
     // Stop MCP server if running
     if (this.mcpServer) {
       void this.mcpServer.stop();
@@ -236,7 +249,9 @@ export default class EzRAGPlugin extends Plugin {
     this.unsubscribeConnection = undefined;
     this.connectionManager?.dispose();
     this.indexingController?.dispose();
-    this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => leaf.detach());
+    this.app.workspace
+      .getLeavesOfType(CHAT_VIEW_TYPE)
+      .forEach((leaf) => leaf.detach());
   }
 
   // New helper methods will be defined later
@@ -276,7 +291,10 @@ export default class EzRAGPlugin extends Plugin {
   }
 
   requireConnection(action: string): boolean {
-    return this.lifecycleCoordinator?.requireConnection(action) ?? this.connectionManager.isConnected();
+    return (
+      this.lifecycleCoordinator?.requireConnection(action) ??
+      this.connectionManager.isConnected()
+    );
   }
 
   isConnected(): boolean {
@@ -287,7 +305,9 @@ export default class EzRAGPlugin extends Plugin {
    * Validate and update API key
    * Returns validation result with success/error info
    */
-  async validateAndUpdateApiKey(value: string): Promise<{ valid: boolean; error?: string; message?: string }> {
+  async validateAndUpdateApiKey(
+    value: string,
+  ): Promise<{ valid: boolean; error?: string; message?: string }> {
     const trimmed = value.trim();
     const current = this.stateManager.getSettings().apiKey;
 
@@ -300,29 +320,32 @@ export default class EzRAGPlugin extends Plugin {
     // Key cleared
     if (!trimmed) {
       this.stateManager.updateSettings({
-        apiKey: '',
-        storeName: '',
-        storeDisplayName: ''
+        apiKey: "",
+        storeName: "",
+        storeDisplayName: "",
       });
       this.geminiService = null;
       this.connectionManager.setApiKeyValid(false);
       await this.saveState();
       this.indexingController?.stop();
       this.updateStatusBar(this.getStatusBarText());
-      return { valid: false, message: 'API key cleared' };
+      return { valid: false, message: "API key cleared" };
     }
 
     // Save key first (so we can test it)
     this.stateManager.updateSettings({
       apiKey: trimmed,
-      storeName: '',
-      storeDisplayName: ''
+      storeName: "",
+      storeDisplayName: "",
     });
     await this.saveState();
 
     // Check if online first
     if (!this.connectionManager.getState().online) {
-      return { valid: false, error: 'No internet connection. Cannot validate API key.' };
+      return {
+        valid: false,
+        error: "No internet connection. Cannot validate API key.",
+      };
     }
 
     // Validate by making a lightweight API call
@@ -337,14 +360,13 @@ export default class EzRAGPlugin extends Plugin {
 
       // If we're the runner, start/refresh indexing
       if (this.runnerManager?.isRunner()) {
-        await this.refreshIndexingState('api-key');
+        await this.refreshIndexingState("api-key");
       }
 
       this.updateStatusBar(this.getStatusBarText());
-      return { valid: true, message: 'API key validated successfully' };
-
+      return { valid: true, message: "API key validated successfully" };
     } catch (err) {
-      console.error('[EzRAG] API key validation failed:', err);
+      console.error("[EzRAG] API key validation failed:", err);
       this.geminiService = null;
       this.indexingController?.stop();
       this.updateStatusBar(this.getStatusBarText());
@@ -353,10 +375,15 @@ export default class EzRAGPlugin extends Plugin {
       const errorMsg = err instanceof Error ? err.message : String(err);
       const lower = errorMsg.toLowerCase();
       let friendlyError = `Validation failed: ${errorMsg}`;
-      if (errorMsg.includes('401') || errorMsg.includes('403') || lower.includes('api key') || lower.includes('unauthorized')) {
-        friendlyError = 'Invalid API key. Please check your key and try again.';
-      } else if (lower.includes('network') || lower.includes('fetch')) {
-        friendlyError = 'Network error. Please check your internet connection.';
+      if (
+        errorMsg.includes("401") ||
+        errorMsg.includes("403") ||
+        lower.includes("api key") ||
+        lower.includes("unauthorized")
+      ) {
+        friendlyError = "Invalid API key. Please check your key and try again.";
+      } else if (lower.includes("network") || lower.includes("fetch")) {
+        friendlyError = "Network error. Please check your internet connection.";
       }
 
       this.connectionManager.setApiKeyValid(false, friendlyError);
@@ -371,7 +398,7 @@ export default class EzRAGPlugin extends Plugin {
     const result = await this.validateAndUpdateApiKey(value);
     if (result.error) return result.error;
     if (result.message) return result.message;
-    return '';
+    return "";
   }
 
   /**
@@ -386,14 +413,19 @@ export default class EzRAGPlugin extends Plugin {
       await tempService.listStores();
       this.connectionManager.setApiKeyValid(true);
     } catch (err) {
-      console.error('[EzRAG] Stored API key validation failed:', err);
-      this.connectionManager.setApiKeyValid(false, 'Stored API key appears to be invalid.');
-      new Notice('EzRAG: Stored API key appears to be invalid. Please update it in settings.');
+      console.error("[EzRAG] Stored API key validation failed:", err);
+      this.connectionManager.setApiKeyValid(
+        false,
+        "Stored API key appears to be invalid.",
+      );
+      new Notice(
+        "EzRAG: Stored API key appears to be invalid. Please update it in settings.",
+      );
     }
   }
 
   async handleRunnerStateChange(): Promise<string> {
-    return await this.refreshIndexingState('runner');
+    return await this.refreshIndexingState("runner");
   }
 
   openIndexingStatusModal(): void {
@@ -416,7 +448,7 @@ export default class EzRAGPlugin extends Plugin {
 
   private async refreshIndexingState(source: string): Promise<string> {
     if (!this.lifecycleCoordinator) {
-      return 'Indexing coordinator not ready.';
+      return "Indexing coordinator not ready.";
     }
     return this.lifecycleCoordinator.refreshIndexingState(source);
   }
@@ -429,24 +461,24 @@ export default class EzRAGPlugin extends Plugin {
    * Rebuild index
    */
   async rebuildIndex(): Promise<void> {
-    if (!this.requireConnection('rebuild the index')) {
+    if (!this.requireConnection("rebuild the index")) {
       return;
     }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
-      new Notice('Index manager not initialized');
+      new Notice("Index manager not initialized");
       return;
     }
 
     const confirmed = await this.confirmAction(
-      'Rebuild Index',
-      'This will clear the local state and reconcile with Gemini. Unchanged files will be restored without re-uploading. Continue?'
+      "Rebuild Index",
+      "This will clear the local state and reconcile with Gemini. Unchanged files will be restored without re-uploading. Continue?",
     );
 
     if (confirmed) {
       await manager.rebuildIndex();
       await this.saveState();
-      new Notice('Index rebuild started');
+      new Notice("Index rebuild started");
     }
   }
 
@@ -454,18 +486,18 @@ export default class EzRAGPlugin extends Plugin {
    * Cleanup orphaned documents
    */
   async cleanupOrphans(): Promise<void> {
-    if (!this.requireConnection('clean up orphans')) {
+    if (!this.requireConnection("clean up orphans")) {
       return;
     }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
-      new Notice('Index manager not initialized');
+      new Notice("Index manager not initialized");
       return;
     }
 
     const confirmed = await this.confirmAction(
-      'Cleanup Orphans',
-      'This will delete documents from Gemini that no longer exist in your vault. Continue?'
+      "Cleanup Orphans",
+      "This will delete documents from Gemini that no longer exist in your vault. Continue?",
     );
 
     if (confirmed) {
@@ -474,8 +506,8 @@ export default class EzRAGPlugin extends Plugin {
         await this.saveState();
         new Notice(`Cleanup complete: ${deleted} orphaned documents deleted`);
       } catch (err) {
-        console.error('[EzRAG] Cleanup failed:', err);
-        new Notice('Cleanup failed. See console for details.');
+        console.error("[EzRAG] Cleanup failed:", err);
+        new Notice("Cleanup failed. See console for details.");
       }
     }
   }
@@ -484,12 +516,12 @@ export default class EzRAGPlugin extends Plugin {
    * Run remote index cleanup with UI
    */
   async runJanitorWithUI(): Promise<void> {
-    if (!this.requireConnection('clean up the remote index')) {
+    if (!this.requireConnection("clean up the remote index")) {
       return;
     }
     const manager = this.indexingController?.getIndexManager();
     if (!manager) {
-      new Notice('Index manager not initialized');
+      new Notice("Index manager not initialized");
       return;
     }
 
@@ -498,7 +530,9 @@ export default class EzRAGPlugin extends Plugin {
 
     try {
       const janitor = manager.getJanitor();
-      const stats = await janitor.runDeduplication(update => modal.updateProgress(update));
+      const stats = await janitor.runDeduplication((update) =>
+        modal.updateProgress(update),
+      );
 
       modal.updateStats(stats);
       modal.markComplete();
@@ -506,20 +540,24 @@ export default class EzRAGPlugin extends Plugin {
       await this.saveState();
 
       new Notice(
-        `Cleanup complete: ${stats.totalRemoved} stale document${stats.totalRemoved === 1 ? '' : 's'} removed`
+        `Cleanup complete: ${stats.totalRemoved} stale document${stats.totalRemoved === 1 ? "" : "s"} removed`,
       );
     } catch (err) {
-      console.error('[EzRAG] Remote index cleanup failed:', err);
+      console.error("[EzRAG] Remote index cleanup failed:", err);
       modal.markFailed((err as Error).message);
-      new Notice('Remote index cleanup failed. See console for details.');
+      new Notice("Remote index cleanup failed. See console for details.");
     }
   }
-
 
   /**
    * Get index statistics
    */
-  getIndexStats(): { total: number; ready: number; pending: number; error: number } {
+  getIndexStats(): {
+    total: number;
+    ready: number;
+    pending: number;
+    error: number;
+  } {
     const allDocs = this.stateManager.getAllDocStates();
     const stats = {
       total: 0,
@@ -530,9 +568,9 @@ export default class EzRAGPlugin extends Plugin {
 
     for (const doc of Object.values(allDocs)) {
       stats.total++;
-      if (doc.status === 'ready') stats.ready++;
-      else if (doc.status === 'pending') stats.pending++;
-      else if (doc.status === 'error') stats.error++;
+      if (doc.status === "ready") stats.ready++;
+      else if (doc.status === "pending") stats.pending++;
+      else if (doc.status === "error") stats.error++;
     }
 
     return stats;
@@ -552,16 +590,16 @@ export default class EzRAGPlugin extends Plugin {
    */
   private getStatusBarText(): string {
     if (!Platform.isDesktopApp) {
-      return 'Mobile (read-only)';
+      return "Mobile (read-only)";
     }
 
     if (!this.runnerManager?.isRunner()) {
-      return 'Inactive (not runner)';
+      return "Inactive (not runner)";
     }
 
     if (!this.indexingController || !this.indexingController.isActive()) {
       const hasKey = Boolean(this.stateManager.getSettings().apiKey);
-      return hasKey ? 'Runner idle' : 'Awaiting API key';
+      return hasKey ? "Runner idle" : "Awaiting API key";
     }
 
     const snapshot = this.indexingController.getSnapshot();
@@ -572,14 +610,14 @@ export default class EzRAGPlugin extends Plugin {
 
   private formatPhaseLabel(phase: IndexingPhase): string {
     switch (phase) {
-      case 'scanning':
-        return 'Scanning';
-      case 'indexing':
-        return 'Indexing';
-      case 'paused':
-        return 'Paused';
+      case "scanning":
+        return "Scanning";
+      case "indexing":
+        return "Indexing";
+      case "paused":
+        return "Paused";
       default:
-        return 'Idle';
+        return "Idle";
     }
   }
 
@@ -588,7 +626,7 @@ export default class EzRAGPlugin extends Plugin {
    */
   async startMCPServer(): Promise<void> {
     if (this.mcpServer) {
-      new Notice('MCP server is already running');
+      new Notice("MCP server is already running");
       return;
     }
 
@@ -598,13 +636,13 @@ export default class EzRAGPlugin extends Plugin {
         app: this.app,
         stateManager: this.stateManager,
         getGeminiService: () => this.getGeminiService(),
-        port: settings.port
+        port: settings.port,
       });
 
       await this.mcpServer.start();
       new Notice(`MCP server started on port ${settings.port}`);
     } catch (err) {
-      console.error('[EzRAG] Failed to start MCP server:', err);
+      console.error("[EzRAG] Failed to start MCP server:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to start MCP server: ${errorMessage}`);
       this.mcpServer = null;
@@ -622,9 +660,9 @@ export default class EzRAGPlugin extends Plugin {
     try {
       await this.mcpServer.stop();
       this.mcpServer = null;
-      new Notice('MCP server stopped');
+      new Notice("MCP server stopped");
     } catch (err) {
-      console.error('[EzRAG] Failed to stop MCP server:', err);
+      console.error("[EzRAG] Failed to stop MCP server:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to stop MCP server: ${errorMessage}`);
     }
@@ -637,8 +675,8 @@ export default class EzRAGPlugin extends Plugin {
     this.stateManager.updateSettings({
       mcpServer: {
         ...this.stateManager.getSettings().mcpServer,
-        enabled
-      }
+        enabled,
+      },
     });
     await this.saveState();
 
@@ -664,8 +702,8 @@ export default class EzRAGPlugin extends Plugin {
     this.stateManager.updateSettings({
       mcpServer: {
         ...this.stateManager.getSettings().mcpServer,
-        port
-      }
+        port,
+      },
     });
     await this.saveState();
 
@@ -682,7 +720,7 @@ export default class EzRAGPlugin extends Plugin {
     if (this.mcpServer) {
       return this.mcpServer.getStatus();
     }
-    return { running: false, url: '' };
+    return { running: false, url: "" };
   }
 
   /**
@@ -690,8 +728,8 @@ export default class EzRAGPlugin extends Plugin {
    */
   private showFirstRunWelcome(): void {
     new Notice(
-      'Welcome to EzRAG! Please configure your Gemini API key in settings.',
-      10000
+      "Welcome to EzRAG! Please configure your Gemini API key in settings.",
+      10000,
     );
   }
 
@@ -701,22 +739,26 @@ export default class EzRAGPlugin extends Plugin {
   async confirmAction(title: string, message: string): Promise<boolean> {
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
-      modal.contentEl.createEl('h2', { text: title });
-      modal.contentEl.createEl('p', { text: message });
+      modal.contentEl.createEl("h2", { text: title });
+      modal.contentEl.createEl("p", { text: message });
 
-      const buttonContainer = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+      const buttonContainer = modal.contentEl.createDiv({
+        cls: "modal-button-container",
+      });
 
-      const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
-      cancelButton.addEventListener('click', () => {
+      const cancelButton = buttonContainer.createEl("button", {
+        text: "Cancel",
+      });
+      cancelButton.addEventListener("click", () => {
         modal.close();
         resolve(false);
       });
 
-      const confirmButton = buttonContainer.createEl('button', {
-        text: 'Continue',
-        cls: 'mod-warning'
+      const confirmButton = buttonContainer.createEl("button", {
+        text: "Continue",
+        cls: "mod-warning",
       });
-      confirmButton.addEventListener('click', () => {
+      confirmButton.addEventListener("click", () => {
         modal.close();
         resolve(true);
       });
