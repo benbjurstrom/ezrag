@@ -94,6 +94,9 @@ This prevents race conditions and duplicate documents when the same vault is ope
 - **`src/state/state.ts`**: Core state management (Obsidian-agnostic)
   - `StateManager`: Persisted data, indexed document tracking, queue entries
   - Can be reused by MCP server
+- **`src/storage/indexStateStorageManager.ts`**: Device-local persistence layer
+  - Loads/saves the `StateManager` index snapshot to `window.localStorage`
+  - Ensures only the runner caches docs/queue data while other devices can rebuild as needed
 - **`src/types.ts`**: All TypeScript interfaces
   - `PersistedData`, `PluginSettings`, `IndexState`, `IndexedDocState`, `IndexQueueEntry`
 
@@ -139,6 +142,13 @@ This prevents race conditions and duplicate documents when the same vault is ope
   - View stats, list all stores, delete store
   - Allows non-runner devices to inspect stores
 
+### Local Index Persistence
+
+- **`src/storage/indexStateStorageManager.ts`**: Device-local index/queue persistence
+  - Stores `StateManager`'s docs + queue snapshot in `window.localStorage`
+  - Prevents `.obsidian` sync from propagating runner-specific index state
+  - Provides helpers to clear or rebuild state when switching stores/runners
+
 ### Connection Management
 
 - **`src/connection/connectionManager.ts`**: Online/offline + API key validation
@@ -150,8 +160,12 @@ This prevents race conditions and duplicate documents when the same vault is ope
 
 - **`src/ui/settingsTab.ts`**: Settings UI
   - Conditional display based on platform and runner status
-  - Desktop runner: Full controls (folders, concurrency, chunking, rebuild, janitor)
-  - Non-runner/mobile: API key + read-only store management
+  - Desktop runner: Full indexing controls (folders, concurrency, chunking, rebuild, janitor, pause/resume)
+  - Manage Stores button (enabled once an API key is set) opens the standalone modal for all store operations
+
+- **`src/ui/storeManagementModal.ts`**: FileSearch store management modal
+  - Lists FileSearch stores for the configured API key
+  - Allows switching the current store, deleting stores, and triggering rebuild flows after destructive actions
 
 - **`src/ui/indexingStatusModal.ts`**: Queue monitor
   - Live view of pending uploads/deletes
@@ -251,11 +265,14 @@ src/
 │   └── hashUtils.ts        # Content hashing (Node crypto)
 ├── store/
 │   └── storeManager.ts     # Store operations (stats, list, delete)
+├── storage/
+│   └── indexStateStorageManager.ts # localStorage persistence for index + queue
 ├── connection/
 │   └── connectionManager.ts # Online/offline + API key tracking
 ├── ui/
 │   ├── settingsTab.ts      # Settings UI
 │   ├── indexingStatusModal.ts  # Queue monitor
+│   ├── storeManagementModal.ts # Gemini FileStore management
 │   ├── janitorProgressModal.ts # Deduplication progress
 │   └── chatView.ts         # Chat interface
 ├── mcp/
@@ -576,8 +593,9 @@ this.app.workspace.onLayoutReady(() => {
 - **Mobile/Non-runner**: Query-only
   - No access to Node.js APIs
   - Can use chat interface
-  - Can view store stats
-  - Settings are read-only for indexing controls
+  - Can open the Manage Stores modal (read-only unless they are the runner)
+  - MCP + chat talk directly to Gemini, so these devices do not persist local index state
+  - Indexing controls remain hidden/disabled
 
 ### State Management
 
@@ -590,10 +608,10 @@ this.app.workspace.onLayoutReady(() => {
   - Key: `ezrag.runner.<pluginId>.<vaultKey>`
   - Prevents cross-device indexing conflicts
 
-- **Queue persistence**: Inside plugin state (survives restarts)
-  - Pending uploads/deletes
-  - Retry counters, readyAt timestamps
-  - Drained when connection available
+- **Index + queue state**: Device-local via `IndexStateStorageManager`
+  - Docs/queue snapshots live in `window.localStorage` (`ezrag.indexState.<pluginId>.<vaultKey>`)
+  - Only the runner needs this data; other devices rebuild from Gemini when they become the runner
+  - Keeps `.obsidian` sync clean while ensuring restarts pick up pending work on the runner
 
 ## References
 

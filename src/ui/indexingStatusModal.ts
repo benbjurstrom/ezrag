@@ -1,12 +1,11 @@
 // src/ui/indexingStatusModal.ts - Queue viewer for indexing operations
 
 import { App, Modal, Notice } from 'obsidian';
-import { ControllerSnapshot, IndexingController, IndexingPhase } from '../indexing/indexingController';
+import { IndexingController, IndexingPhase } from '../indexing/indexingController';
 import { IndexQueueEntry } from '../types';
 import type EzRAGPlugin from '../../main';
 
 export class IndexingStatusModal extends Modal {
-  private snapshot: ControllerSnapshot;
   private unsubscribe?: () => void;
   private phaseEl!: HTMLElement;
   private statsEl!: HTMLElement;
@@ -17,7 +16,6 @@ export class IndexingStatusModal extends Modal {
 
   constructor(app: App, private controller: IndexingController, private plugin: EzRAGPlugin) {
     super(app);
-    this.snapshot = controller.getSnapshot();
   }
 
   onOpen(): void {
@@ -54,8 +52,7 @@ export class IndexingStatusModal extends Modal {
     // Queue table container
     this.queueContainer = contentEl.createDiv({ cls: 'ezrag-queue-table-container' });
 
-    this.unsubscribe = this.controller.subscribe((snapshot) => {
-      this.snapshot = snapshot;
+    this.unsubscribe = this.controller.subscribe(() => {
       this.renderSummary();
       this.rebuildQueue();
     });
@@ -79,7 +76,7 @@ export class IndexingStatusModal extends Modal {
   }
 
   private renderSummary(): void {
-    const { phase } = this.snapshot;
+    const phase = this.controller.getSnapshot().phase;
     const active = this.controller.isActive();
     const stats = this.plugin.getIndexStats();
 
@@ -161,7 +158,6 @@ export class IndexingStatusModal extends Modal {
    */
   private updateTimeCells(): void {
     const entries = this.plugin.stateManager.getQueueEntries();
-    const now = Date.now();
 
     for (const entry of entries) {
       const key = `${entry.vaultPath}-${entry.operation}`;

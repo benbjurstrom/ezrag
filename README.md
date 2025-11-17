@@ -12,7 +12,7 @@ Index your Obsidian vault with Google Gemini's File Search API for semantic sear
 
 ## Quick Start
 
-1. Get API key from [Google AI Studio](https://ai.google.dev/)
+1. Get an API key from [Google AI Studio](https://aistudio.google.com/) (same credentials work across [ai.google.dev](https://ai.google.dev/))
 2. Install plugin: Settings → Community Plugins → Browse → "EzRAG"
 3. Configure: Settings → EzRAG
    - Add your API key
@@ -44,41 +44,34 @@ claude mcp add --transport http ezrag-obsidian-notes http://localhost:42427/mcp
 - `semanticSearch` - AI-powered semantic search
 - `note:///<path>` - Read note contents by path
 
-## Commands
-
-Access via Command Palette (Cmd/Ctrl+P):
-
-- **Rebuild Index** - Force re-index all files (uses smart reconciliation to avoid duplicates)
-- **Clean Up Gemini Index** - Remove orphaned or duplicate documents from Gemini
-- **Open Queue** - Monitor indexing progress and pending uploads
-
-**Store Management:** Click "Manage Stores" button in settings to view, switch, or delete FileSearch stores.
-
-## Settings Overview
-
-Configure in Settings → EzRAG:
-
-- **Included Folders** - Limit indexing to specific folders (empty = entire vault)
-- **Upload Concurrency** - Number of simultaneous uploads (1-5, default: 2)
-- **Upload Throttle** - Delay before uploading modified notes (batches rapid edits)
-- **Chunking** - Token limits for document chunks (default: 400 tokens, 50 overlap)
-
 ## FAQ
 
-**How much does it cost?**
-Google Gemini pricing applies. Check [ai.google.dev/pricing](https://ai.google.dev/pricing)
+**Where do I get an API key?**  
+Sign in at [Google AI Studio](https://aistudio.google.com/), create a project, and copy the Gemini API key. The same credential works with the REST/SDK endpoints documented on [ai.google.dev](https://ai.google.dev/).
 
-**Can I use this on mobile?**
+**How much does it cost?**  
+File Search follows Gemini pricing ([overview](https://ai.google.dev/pricing); [latest File Search details](https://ai.google.dev/gemini-api/docs/file-search#pricing)):
+- Indexing charges are billed at the [embedding rate](https://ai.google.dev/gemini-api/docs/pricing#gemini-embedding) – currently **$0.15 per 1M tokens** processed when EzRAG uploads or updates a note.
+- Storage of FileSearch stores is free.
+- Query-time embeddings are free; retrieved chunks simply count toward your model’s regular context-token usage.
+
+**What are the File Search limits?**  
+From the [Gemini File Search docs](docs/gemini-docs/file-search.md):
+- Maximum file size per document: **100 MB**.
+- Total FileSearch storage per Google tier: **1 GB (Free)**, **10 GB (Tier 1)**, **100 GB (Tier 2)**, **1 TB (Tier 3)**. Google recommends keeping each store under 20 GB for faster retrievals.
+- Backend storage is roughly 3× your source data because embeddings are stored alongside the original text.
+
+**Can I use this on mobile?**  
 Plugin works on mobile but can't be the runner (indexing machine). Chat and search work once a desktop runner has indexed your vault.
 
-**Which files are indexed?**
+**Which files are indexed?**  
 Only Markdown files (`.md`) in included folders.
 
-**How do I fix duplicates?**
-Run "Clean Up Gemini Index" command. Ensure only one device is designated as runner.
+**How do I fix duplicates?**  
+Run "Clean Up Gemini Index" (Janitor) in settings. Also verify that only one desktop is designated as the runner.
 
-**What is a FileSearchStore?**
-Gemini's container for indexed documents. EzRAG creates one per vault.
+**What is a FileSearchStore?**  
+It’s the Gemini container that stores your note embeddings so the model can retrieve relevant chunks. Google’s developer blog has a great overview: [“Introducing File Search for Gemini API”](https://blog.google/technology/developers/file-search-gemini-api/). EzRAG automatically creates one store per vault and manages it via the Manage Stores modal.
 
 ## Privacy
 
@@ -86,10 +79,6 @@ Gemini's container for indexed documents. EzRAG creates one per vault.
 - Data is stored in your Google account's FileSearch store
 - You can delete your store anytime via Settings → Manage Stores
 - EzRAG collects no usage data or telemetry
-
-## Development
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details.
 
 ## Support
 

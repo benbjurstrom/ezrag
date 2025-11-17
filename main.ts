@@ -131,9 +131,16 @@ export default class EzRAGPlugin extends Plugin {
     // Add status bar + subscribe to controller updates
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.style.cursor = 'pointer';
-    this.statusBarItem.setAttribute('aria-label', 'Click to open indexing queue');
+    this.statusBarItem.setAttribute('aria-label', 'Click to open queue or settings');
     this.statusBarItem.addEventListener('click', () => {
-      this.openIndexingStatusModal();
+      if (Platform.isDesktopApp && this.runnerManager?.isRunner()) {
+        // Runner is active - open queue modal
+        this.openIndexingStatusModal();
+      } else {
+        // Not runner or mobile - open settings
+        this.app.setting.open();
+        this.app.setting.openTabById(this.manifest.id);
+      }
     });
     this.updateStatusBar(this.getStatusBarText());
 
