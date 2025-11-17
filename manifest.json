@@ -1,7 +1,7 @@
 {
   "id": "ezrag",
   "name": "EzRAG",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "minAppVersion": "0.15.0",
   "description": "Adds semantic search and AI chat for your Obsidian vault using Google Gemini's File Search API. It also provides a built in MCP server so external tools can semantically search your vault.",
   "author": "Ben Bjurstrom",
