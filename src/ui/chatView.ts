@@ -1,125 +1,10 @@
 // src/ui/chatView.ts - Mobile-first chat interface using Obsidian design system
 
-import { App, ItemView, Notice, WorkspaceLeaf, Modal, setIcon } from 'obsidian';
+import { App, ItemView, Notice, WorkspaceLeaf, setIcon } from 'obsidian';
 import type EzRAGPlugin from '../../main';
-import { ChatMessage, ChatModel, GroundingChunk } from '../types';
+import { ChatMessage, ChatModel } from '../types';
 
 export const CHAT_VIEW_TYPE = 'ezrag-chat-view';
-
-class SourceModal extends Modal {
-  constructor(app: App, private source: { text: string; index: number; title?: string; uri?: string }) {
-    super(app);
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    // Use standard modal structure
-    const header = contentEl.createEl('h3', { text: `Source ${this.source.index}` });
-
-    // Display title and uri if available
-    if (this.source.title || this.source.uri) {
-      const metadata = contentEl.createDiv('source-metadata');
-      metadata.style.marginBottom = '1em';
-      metadata.style.fontSize = '0.9em';
-      metadata.style.color = 'var(--text-muted)';
-
-      if (this.source.title) {
-        const titleEl = metadata.createDiv();
-        titleEl.createEl('strong', { text: 'Title: ' });
-        titleEl.createSpan({ text: this.source.title });
-      }
-
-      if (this.source.uri) {
-        const uriEl = metadata.createDiv();
-        uriEl.createEl('strong', { text: 'URI: ' });
-        uriEl.createSpan({ text: this.source.uri });
-      }
-    }
-
-    const sourceContent = contentEl.createDiv('modal-content');
-    sourceContent.innerHTML = this.renderMarkdown(this.source.text);
-
-    // Use standard button container
-    const buttonContainer = contentEl.createDiv('modal-button-container');
-    const closeBtn = buttonContainer.createEl('button', {
-      text: 'Close',
-      cls: 'mod-cta'
-    });
-    closeBtn.addEventListener('click', () => this.close());
-  }
-
-  private renderMarkdown(text: string): string {
-    if (!text) return '';
-    const escaped = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-    const lines = escaped.split('\n');
-    let html = '';
-    let listType: 'ul' | 'ol' | null = null;
-    let paragraph = '';
-
-    const flushParagraph = () => {
-      if (paragraph) {
-        html += `<p>${paragraph}</p>`;
-        paragraph = '';
-      }
-    };
-
-    const flushList = () => {
-      if (listType) {
-        html += `</${listType}>`;
-        listType = null;
-      }
-    };
-
-    for (const raw of lines) {
-      const line = raw
-        .replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>')
-        .replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
-
-      const ordered = line.match(/^\s*\d+\.\s(.*)/);
-      const unordered = line.match(/^\s*[*-]\s(.*)/);
-
-      if (ordered) {
-        flushParagraph();
-        if (listType !== 'ol') {
-          flushList();
-          html += '<ol>';
-          listType = 'ol';
-        }
-        html += `<li>${ordered[1]}</li>`;
-        continue;
-      }
-
-      if (unordered) {
-        flushParagraph();
-        if (listType !== 'ul') {
-          flushList();
-          html += '<ul>';
-          listType = 'ul';
-        }
-        html += `<li>${unordered[1]}</li>`;
-        continue;
-      }
-
-      flushList();
-      if (line.trim().length === 0) {
-        flushParagraph();
-      } else {
-        paragraph += `${paragraph ? '<br/>' : ''}${line}`;
-      }
-    }
-
-    flushParagraph();
-    flushList();
-    return html;
-  }
-}
 
 export class ChatView extends ItemView {
   private readonly plugin: EzRAGPlugin;
@@ -336,34 +221,50 @@ export class ChatView extends ItemView {
 
     const bubble = row.createDiv('ezrag-message-bubble');
     const content = bubble.createDiv('ezrag-message-content');
-    content.innerHTML = this.renderMarkdown(message.text);
 
-    // Sources (for assistant messages only)
-    if (message.role === 'model' && message.groundingChunks && message.groundingChunks.length > 0) {
-      const sources = bubble.createDiv('ezrag-message-sources');
+    // For model messages with grounding, annotate with citations
+    if (message.role === 'model' && message.groundingSupports && message.groundingSupports.length > 0) {
+      const { annotatedText, fileReferences } = this.annotateWithCitations(
+        message.text,
+        message.groundingSupports,
+        message.groundingChunks || []
+      );
 
-      message.groundingChunks.forEach((chunk: GroundingChunk, index: number) => {
-        const text = chunk?.retrievedContext?.text;
-        if (!text) return;
+      // Render markdown first (placeholders pass through)
+      let html = this.renderMarkdown(annotatedText);
 
-        const title = chunk?.retrievedContext?.title;
-        const uri = chunk?.retrievedContext?.uri;
-
-        const sourceBtn = sources.createEl('button', {
-          cls: 'ezrag-source-chip',
-          text: `${index + 1}`
-        });
-
-        // Show title in tooltip if available
-        if (title) {
-          sourceBtn.setAttribute('aria-label', title);
-          sourceBtn.setAttribute('title', title);
-        }
-
-        sourceBtn.addEventListener('click', () => {
-          new SourceModal(this.app, { text, index: index + 1, title, uri }).open();
-        });
+      // Replace placeholders with actual citation HTML
+      html = html.replace(/\{\{CITATION:([^:]+):([^}]+)\}\}/g, (match, nums, files) => {
+        const fileArray = files.split('|');
+        return `<sup class="ezrag-citation" data-files="${files}" title="Click to open: ${fileArray.join(', ')}">[${nums}]</sup>`;
       });
+
+      content.innerHTML = html;
+
+      // Add click handler for citations (event delegation)
+      content.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('ezrag-citation')) {
+          const filesAttr = target.getAttribute('data-files');
+          if (filesAttr) {
+            const files = filesAttr.split('|');
+            // Open the first file (or all files if multiple)
+            if (files.length === 1) {
+              this.app.workspace.openLinkText(files[0], '', false);
+            } else {
+              // Multiple files: open first one (could be enhanced to show a menu)
+              this.app.workspace.openLinkText(files[0], '', false);
+            }
+          }
+        }
+      });
+
+      // Add references section
+      if (fileReferences.size > 0) {
+        this.renderReferences(bubble, fileReferences);
+      }
+    } else {
+      content.innerHTML = this.renderMarkdown(message.text);
     }
 
     return row;
@@ -479,6 +380,7 @@ export class ChatView extends ItemView {
         role: 'model',
         text: result.text || 'No response returned.',
         groundingChunks: result.groundingChunks || [],
+        groundingSupports: result.groundingSupports || [],
       });
     } catch (err) {
       console.error('[EzRAG] Chat query failed', err);
@@ -491,6 +393,122 @@ export class ChatView extends ItemView {
       this.isLoading = false;
       this.updateHeader();
       this.renderMessages();
+    }
+  }
+
+  /**
+   * Annotate answer text with inline citations based on grounding supports
+   * Returns annotated text and file reference map
+   */
+  private annotateWithCitations(
+    answerText: string,
+    groundingSupports: any[],
+    groundingChunks: any[]
+  ): { annotatedText: string; fileReferences: Map<string, number> } {
+    const fileReferences = new Map<string, number>();
+
+    if (!groundingSupports || groundingSupports.length === 0) {
+      return { annotatedText: answerText, fileReferences };
+    }
+
+    // Step 1: Build file reference map (file path → citation number)
+    let refNumber = 1;
+    for (const support of groundingSupports) {
+      const indices = support.groundingChunkIndices || [];
+      for (const index of indices) {
+        if (index >= 0 && index < groundingChunks.length) {
+          const title = groundingChunks[index]?.retrievedContext?.title;
+          if (title && !fileReferences.has(title)) {
+            fileReferences.set(title, refNumber++);
+          }
+        }
+      }
+    }
+
+    // Step 2: Group citations by position (endIndex)
+    const positionMap = new Map<number, Set<number>>();
+
+    for (const support of groundingSupports) {
+      const endIndex = support.segment?.endIndex;
+      if (endIndex === undefined) continue;
+
+      const indices = support.groundingChunkIndices || [];
+      for (const index of indices) {
+        if (index >= 0 && index < groundingChunks.length) {
+          const title = groundingChunks[index]?.retrievedContext?.title;
+          if (title) {
+            const refNum = fileReferences.get(title);
+            if (refNum) {
+              if (!positionMap.has(endIndex)) {
+                positionMap.set(endIndex, new Set());
+              }
+              positionMap.get(endIndex)!.add(refNum);
+            }
+          }
+        }
+      }
+    }
+
+    // Step 3: Prepare insertions with citation placeholders
+    const insertions: Array<{ position: number; text: string }> = [];
+
+    positionMap.forEach((refNums, position) => {
+      const sortedNums = Array.from(refNums).sort((a, b) => a - b);
+
+      // Get file names for tooltip
+      const fileNames = sortedNums
+        .map(num => {
+          for (const [path, refNum] of fileReferences.entries()) {
+            if (refNum === num) return path;
+          }
+          return '';
+        })
+        .filter(Boolean);
+
+      // Use placeholder that won't be escaped by renderMarkdown
+      const citationPlaceholder = `{{CITATION:${sortedNums.join(',')}:${fileNames.join('|')}}}`;
+      insertions.push({ position, text: citationPlaceholder });
+    });
+
+    // Step 4: Insert citations in reverse order (to preserve indices)
+    insertions.sort((a, b) => b.position - a.position);
+
+    let annotatedText = answerText;
+    for (const insertion of insertions) {
+      annotatedText =
+        annotatedText.slice(0, insertion.position) +
+        insertion.text +
+        annotatedText.slice(insertion.position);
+    }
+
+    return { annotatedText, fileReferences };
+  }
+
+  /**
+   * Render references section with clickable file links
+   */
+  private renderReferences(
+    container: HTMLElement,
+    fileReferences: Map<string, number>
+  ): void {
+    if (fileReferences.size === 0) return;
+
+    // Sort by reference number
+    const sortedRefs = Array.from(fileReferences.entries()).sort((a, b) => a[1] - b[1]);
+
+    const refsList = container.createEl('ol', { cls: 'ezrag-references' });
+
+    for (const [filePath, refNum] of sortedRefs) {
+      const li = refsList.createEl('li');
+      const link = li.createEl('a', {
+        text: filePath,
+        cls: 'ezrag-reference-link'
+      });
+
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.app.workspace.openLinkText(filePath, '', false);
+      });
     }
   }
 

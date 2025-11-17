@@ -186,28 +186,44 @@ button.ezrag-chat-send {
   -ms-user-select: text;
 }
 
-/* Sources */
-.ezrag-message-sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--size-4-1);
-  margin-top: var(--size-4-3);
+/* Citations (inline superscript) */
+.ezrag-citation {
+  color: var(--text-accent);
+  font-size: 0.75em;
+  margin-left: 2px;
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+  transition: opacity 0.1s ease;
 }
 
-.ezrag-source-chip {
-  padding: 2px 8px;
-  font-size: var(--font-ui-smaller);
-  border-radius: var(--radius-s);
-  background: var(--background-modifier-border);
-  color: var(--text-muted);
-  border: none;
+.ezrag-citation:hover {
+  opacity: 0.7;
+}
+
+/* References section */
+.ezrag-references {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 0.9em;
+  padding-left: 24px;
+}
+
+.ezrag-references li {
+  margin: 4px 0;
+}
+
+.ezrag-reference-link {
+  color: var(--link-color);
+  text-decoration: none;
   cursor: pointer;
   transition: all 0.1s ease;
 }
 
-.ezrag-source-chip:hover {
-  background: var(--background-modifier-border-hover);
-  color: var(--text-normal);
+.ezrag-reference-link:hover {
+  text-decoration: underline;
+  color: var(--link-color-hover);
 }
 
 /* Loading indicator */

@@ -107,6 +107,7 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
   groundingChunks?: GroundingChunk[];
+  groundingSupports?: any[];
 }
 
 export type ChatModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';
