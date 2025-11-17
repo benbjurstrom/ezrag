@@ -79,11 +79,12 @@ export class IndexingStatusModal extends Modal {
   }
 
   private renderSummary(): void {
-    const { phase, stats } = this.snapshot;
+    const { phase } = this.snapshot;
     const active = this.controller.isActive();
+    const stats = this.plugin.getIndexStats();
 
     this.phaseEl.setText(`Phase: ${this.getPhaseLabel(phase, active)}`);
-    this.statsEl.setText(`Completed: ${stats.completed}/${Math.max(stats.total, stats.completed)} · Failed: ${stats.failed} · Pending: ${stats.pending}`);
+    this.statsEl.setText(`Ready: ${stats.ready}/${stats.total} · Pending: ${stats.pending} · Errors: ${stats.error}`);
   }
 
   /**
@@ -111,7 +112,7 @@ export class IndexingStatusModal extends Modal {
     const table = this.queueContainer.createEl('table', { cls: 'ezrag-queue-table' });
     const thead = table.createEl('thead');
     const headerRow = thead.createEl('tr');
-    ['Document', 'Operation', 'Status', 'Ready In', 'Attempts'].forEach((label) => {
+    ['Document', 'Operation', 'Status', 'Will Upload In', 'Attempts'].forEach((label) => {
       headerRow.createEl('th', { text: label });
     });
 
@@ -136,7 +137,7 @@ export class IndexingStatusModal extends Modal {
       // Status (static)
       row.createEl('td', { text: this.getEntryStatus(entry) });
 
-      // Ready in (dynamic - updated by timer)
+      // Will Upload In (dynamic - updated by timer)
       row.createEl('td', {
         text: this.getReadyText(entry),
         cls: 'ezrag-queue-ready',

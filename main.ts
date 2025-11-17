@@ -1,6 +1,6 @@
 // main.ts - Plugin entry point
 
-import { App, Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
+import { Modal, Platform, Plugin, TFile, Notice } from 'obsidian';
 import { StateManager } from './src/state/state';
 import { DEFAULT_DATA } from './src/types';
 import { GeminiService } from './src/gemini/geminiService';
@@ -130,6 +130,11 @@ export default class EzRAGPlugin extends Plugin {
 
     // Add status bar + subscribe to controller updates
     this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.style.cursor = 'pointer';
+    this.statusBarItem.setAttribute('aria-label', 'Click to open indexing queue');
+    this.statusBarItem.addEventListener('click', () => {
+      this.openIndexingStatusModal();
+    });
     this.updateStatusBar(this.getStatusBarText());
 
     // Register vault events after layout is ready to avoid processing existing files on startup
