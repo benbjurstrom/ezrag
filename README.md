@@ -1,6 +1,6 @@
 # EzRAG – AI-Powered Search for Obsidian Notes
 
-EzRAG turns your Obsidian vault into a Gemini File Search index so you can run semantic search, chat over your notes, and expose your vault through MCP tools. Everything stays in your Google account; the plugin simply keeps the index up to date.
+EzRAG turns your Obsidian vault into a [Gemini File Search](https://blog.google/technology/developers/file-search-gemini-api/) index so you can run semantic search, chat over your notes, and expose your vault through MCP tools. Everything stays in your Google account; the plugin simply keeps the index up to date.
 
 <img width="716" height="507" alt="Chat Interface Screenshot" src="https://github.com/user-attachments/assets/4026c1aa-0a9e-43f0-bbb8-31b95e645244" />
 
@@ -43,7 +43,6 @@ EzRAG turns your Obsidian vault into a Gemini File Search index so you can run s
 
 1. Settings → **EzRAG** → enter your Gemini API key.
 2. On desktop, toggle **This machine is the runner** to let it index.
-3. The plugin creates/updates a Gemini FileSearch store and starts watching your notes.
 
 <img width="826" height="591" alt="Settings Screenshot" src="https://github.com/user-attachments/assets/8d3d2470-b305-4114-91ed-b8778af66e1e" />
 
@@ -60,6 +59,7 @@ Open via the ribbon icon or `EzRAG: Open Chat`. Try prompts like:
 
 Enable **Settings → EzRAG → MCP Server** to let tools connect.
 
+Connect from Claude Code:
 ```bash
 claude mcp add --transport http ezrag-obsidian-notes http://localhost:42427/mcp
 ```
