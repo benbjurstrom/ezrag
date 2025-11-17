@@ -517,7 +517,7 @@ export class IndexManager {
   private async indexPreparedFile(prepared: PreparedFile): Promise<void> {
     const { file, content, contentHash, pathHash, tags } = prepared;
     const settings = this.state.getSettings();
-    const metadata = buildDocumentMetadata(this.vaultName, prepared);
+    const metadata = buildDocumentMetadata(prepared);
     const existingState = this.state.getDocState(file.path);
 
     const documentName = await this.documentReplacer.replaceDocument(existingState?.geminiDocumentName ?? null, {

@@ -176,7 +176,11 @@ This prevents race conditions and duplicate documents when the same vault is ope
   - Phase-based progress (fetching/analyzing/deleting)
   - Shows duplicates/orphans found and deleted
 
-- **`src/ui/chatView.ts`**: Chat interface (query indexed notes)
+- **`src/ui/chatView.ts`**: Chat interface with inline citations
+  - Displays answers with academic-style inline citations `[1]`, `[2]`, etc.
+  - Citations are clickable and open the source document directly
+  - Shows reference list at bottom with file links
+  - Uses shared citation utility for annotation
 
 ### Utilities
 
@@ -186,11 +190,22 @@ This prevents race conditions and duplicate documents when the same vault is ope
 - **`src/utils/logger.ts`**: Logging utility
 - **`src/utils/metadata.ts`**: Metadata builder for Gemini documents
 
-### Future: MCP Server
+- **`src/utils/citations.ts`**: **Shared citation annotation logic**
+  - `buildCitationData()`: Extracts citation data from Gemini grounding supports/chunks
+  - `annotateForChat()`: Returns HTML placeholders for chat view rendering
+  - `annotateForMarkdown()`: Returns plain markdown with inline `[1]` citations and reference list
+  - Used by both chat interface and MCP server to provide consistent citation behavior
 
-- **`src/mcp/server.ts`**: (Planned) Standalone MCP server
-  - Will expose `keywordSearch` and `semanticSearch` tools
+### MCP Server
+
+- **`src/mcp/server.ts`**: MCP server implementation
+  - Exposes `keywordSearch` and `semanticSearch` tools via Model Context Protocol
+  - `semanticSearch` returns markdown with inline citations (e.g., `[1]`, `[2]`) and reference list
   - Reuses `StateManager` and `GeminiService`
+  - **`src/mcp/tools/semanticSearch.ts`**: MCP semantic search implementation
+    - Returns plain markdown string (not JSON with sources array)
+    - Uses shared `annotateForMarkdown()` utility
+    - Output format: `Answer text[1]...\n\n1. file.md\n2. file2.md`
 
 ## Data Flow Quick Reference
 
@@ -274,17 +289,21 @@ src/
 │   ├── indexingStatusModal.ts  # Queue monitor
 │   ├── storeManagementModal.ts # Gemini FileStore management
 │   ├── janitorProgressModal.ts # Deduplication progress
-│   └── chatView.ts         # Chat interface
+│   └── chatView.ts         # Chat interface with inline citations
 ├── mcp/
-│   └── server.ts           # MCP server (planned)
+│   ├── server.ts           # MCP server implementation
+│   └── tools/
+│       └── semanticSearch.ts  # Semantic search with markdown citations
 └── utils/
     ├── logger.ts           # Logging
     ├── metadata.ts         # Metadata builder
-    └── vault.ts            # Vault utilities (key generation)
+    ├── vault.ts            # Vault utilities (key generation)
+    └── citations.ts        # Shared citation annotation logic
 ```
 
 **Key Principles:**
-- **Obsidian-agnostic layers**: `state.ts` and `geminiService.ts` can be reused by MCP server
+- **Obsidian-agnostic layers**: `state.ts`, `geminiService.ts`, and `citations.ts` can be reused by MCP server
+- **Shared code patterns**: Citation logic extracted to `utils/citations.ts` for reuse between chat and MCP
 - **Small main.ts**: Plugin lifecycle only (~400 lines), delegates to controllers
 - **Desktop-only modules**: `hashUtils.ts`, `runnerState.ts` use Node.js APIs
 - **No build artifacts in git**: `main.js` is generated, not committed
@@ -381,6 +400,67 @@ Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particula
 - Introduce network calls without an obvious user-facing reason and documentation.
 - Ship features that require cloud services without clear disclosure and explicit opt-in.
 - Store or transmit vault contents unless essential and consented.
+
+## Citation System Implementation
+
+EzRAG implements inline citations using Gemini's grounding metadata to show which parts of answers are supported by which source documents.
+
+### How It Works
+
+1. **Gemini Response Structure**: Gemini returns:
+   - `groundingChunks`: Array of retrieved document chunks with title, text, and metadata
+   - `groundingSupports`: Array of segments with `startIndex`, `endIndex`, and `groundingChunkIndices`
+
+2. **Shared Citation Logic** (`src/utils/citations.ts`):
+   - `buildCitationData()`: Extracts citation data from grounding metadata
+     - Builds file reference map (file path → citation number)
+     - Groups citations by position (`endIndex`)
+     - Returns `{ fileReferences, citations }` data structure
+   - `insertCitations()`: Generic insertion function using custom formatters
+   - `annotateForChat()`: Returns HTML placeholders for chat rendering
+   - `annotateForMarkdown()`: Returns plain markdown with `[1]` citations
+
+3. **Chat View Implementation**:
+   - Uses `annotateForChat()` to insert placeholder markers: `{{CITATION:1,2:file1|file2}}`
+   - Renders markdown (placeholders pass through unescaped)
+   - Replaces placeholders with HTML: `<sup class="ezrag-citation" data-files="...">[1,2]</sup>`
+   - Adds click handlers via event delegation to open documents
+   - Renders reference list at bottom with clickable file links
+
+4. **MCP Implementation**:
+   - Uses `annotateForMarkdown()` to insert plain text citations: `[1]`, `[2]`
+   - Appends reference list in markdown format:
+     ```
+     1. file1.md
+     2. file2.md
+     ```
+   - Returns single string (no JSON structure, no HTML)
+
+### Key Design Decisions
+
+- **Placeholder approach**: Avoids HTML escaping issues in markdown renderer
+- **Event delegation**: Handles clicks on dynamically inserted citations
+- **Shared core logic**: 100+ lines of duplication eliminated
+- **Format agnostic**: Same data extraction, different output formats (HTML vs markdown)
+
+### Example Output
+
+**Chat (HTML with clickable citations):**
+```
+Answer text with inline citations[1] and more text[2].
+
+References:
+1. file1.md (clickable)
+2. file2.md (clickable)
+```
+
+**MCP (Plain markdown):**
+```
+Answer text with inline citations[1] and more text[2].
+
+1. file1.md
+2. file2.md
+```
 
 ## Common tasks for EzRAG development
 
