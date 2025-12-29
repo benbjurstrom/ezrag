@@ -153,6 +153,7 @@ export class MCPServer {
 
           return {
             content: [{ type: "text", text: markdown }],
+            structuredContent: { answer: markdown } as Record<string, unknown>,
           };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
