@@ -22,14 +22,14 @@ EzRAG turns your Obsidian vault into a [Gemini File Search](https://blog.google/
 
 **Option 1 – BRAT (recommended)**
 1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins.
-2. BRAT settings → **Add Beta Plugin** → `https://github.com/yourusername/ezrag`.
+2. BRAT settings → **Add Beta Plugin** → `https://github.com/benbjurstrom/ezrag`.
 3. Enable EzRAG in Community Plugins.
 
 **Option 2 – Manual**
 1. Clone into your vault:  
    ```bash
    cd /path/to/vault/.obsidian/plugins
-   git clone https://github.com/yourusername/ezrag
+   git clone https://github.com/benbjurstrom/ezrag
    ```
 2. Build once:  
    ```bash
