@@ -117,9 +117,9 @@ export class MCPServer {
       "semanticSearch",
       {
         title: "Semantic Search",
-        description: `Perform semantic search on "${this.app.vault.getName()}" Obsidian vault using Gemini FileSearch. Returns AI-generated answer with inline citations and references in markdown format.`,
+        description: `Search the user's "${this.app.vault.getName()}" Obsidian vault to answer questions based on their personal notes. Pass the user's question or topic directly - the query will be grounded in their documents automatically. Returns an AI-generated answer with inline citations referencing specific notes. Use this when users ask about their own ideas, projects, notes, or any information they may have documented.`,
         inputSchema: {
-          query: z.string().describe("Natural language search query"),
+          query: z.string().describe("The user's question or topic to search for in their notes"),
           model: z
             .enum(["gemini-2.5-flash", "gemini-2.5-pro"])
             .optional()

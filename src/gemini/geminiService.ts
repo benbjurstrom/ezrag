@@ -204,15 +204,23 @@ export class GeminiService {
 
   /**
    * Query the FileSearchStore
+   *
+   * The query is wrapped with grounding instructions to ensure Gemini
+   * searches the indexed documents rather than answering from its own knowledge.
    */
   async fileSearch(
     storeName: string,
     query: string,
     model: ChatModel = "gemini-2.5-flash",
   ): Promise<FileSearchResult> {
+    // Wrap query with grounding instructions to ensure Gemini uses the fileSearch tool
+    const groundedQuery = `Search my indexed documents to answer this question: ${query}
+
+Base your response ONLY on information found in the documents. Cite the relevant sources. If no relevant information is found in the documents, clearly state that.`;
+
     const response = await this.ai.models.generateContent({
       model,
-      contents: query,
+      contents: groundedQuery,
       config: {
         tools: [
           {
